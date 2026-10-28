@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
-// ⚠️ ضع التوكن الجديد هنا
+// ⚠️ ضع التوكن الجديد هنا (الأفضل استخدام متغيرات البيئة على Render، لكن هذا يعمل)
 const BOT_TOKEN = '8944449366:AAF-2I10o__647D8eAxlatu_pipO1n8KCW4';
 
 const DB_FILE = path.join(__dirname, 'database.json');
@@ -256,5 +256,14 @@ app.post('/api/store/update', (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
+// =========================================================
+// مسار فحص الحالة (Health Check) لـ UptimeRobot
+// =========================================================
+app.get('/health', (req, res) => res.status(200).send('OK'));
+app.head('/health', (req, res) => res.status(200).end());
+
+// =========================================================
+// تشغيل الخادم
+// =========================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ الخادم يعمل على المنفذ ${PORT}`));
