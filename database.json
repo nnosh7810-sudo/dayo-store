@@ -1,0 +1,39 @@
+{
+  "users": {
+    "51442749": {
+      "role": "owner",
+      "name": "المالك"
+    },
+    "8791262013": {
+      "role": "moderator",
+      "name": "مستخدم"
+    },
+    "8864485404": {
+      "role": "admin",
+      "name": "مستخدم"
+    }
+  },
+  "products": [
+    {
+      "id": "1793050384966",
+      "name": "رقم وهمي",
+      "description": "ارقام وهميه متوفر ارقام من جميع الدول \nالسعوديه\nامريكا\nالبرازيل\nفرنسا\nالعراق\nمصر\nتركيا\nروسيا\nالمانيا\nبلجيكا",
+      "image": "",
+      "prices": {
+        "usd": 0.4,
+        "ton": 0.1,
+        "stars": 40,
+        "sar": 2
+      },
+      "creatorId": "51442749",
+      "creatorName": "المالك"
+    }
+  ],
+  "store": {
+    "name": "DAYO STORE",
+    "cover": "https://imgur.com/a/GSPv5C0",
+    "logo": "https://imgur.com/a/GSPv5C0",
+    "usersCount": 12846,
+    "onlineCount": 1245
+  }
+}
