@@ -47,7 +47,8 @@ async function connectDB() {
         cover: '',
         logo: '',
         usersCount: 12846,
-        onlineCount: 1245
+        onlineCount: 1245,
+        menuLinks: {} // لحفظ روابط الأقسام
       });
     }
 
@@ -263,8 +264,20 @@ app.post('/api/store/update', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
+// حفظ روابط الأقسام الأربعة
+app.post('/api/store/update-links', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (user.role !== 'owner') throw new Error('للمالك فقط');
+    const { links } = req.body; // { telegram: '...', nft: '...', social: '...', games: '...' }
+    
+    await db.collection('store').updateOne({ _id: 'main' }, { $set: { menuLinks: links } });
+    res.json({ ok: true });
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
 // =========================================================
-// مسارات السلايدر الجديدة
+// مسارات السلايدر
 // =========================================================
 app.post('/api/slider', async (req, res) => {
   try {
@@ -281,19 +294,9 @@ app.post('/api/slider/add', async (req, res) => {
     const { image, title, btnText, btnLink } = req.body;
     
     if (!image) throw new Error('يجب إضافة صورة');
+    const newSlide = { id: Date.now().toString(), image, title: title || '', btnText: btnText || '', btnLink: btnLink || '' };
     
-    const newSlide = { 
-      id: Date.now().toString(), 
-      image, 
-      title: title || '', 
-      btnText: btnText || '', 
-      btnLink: btnLink || '' 
-    };
-    
-    await db.collection('slider').updateOne(
-      { _id: 'main' },
-      { $push: { slides: newSlide } }
-    );
+    await db.collection('slider').updateOne({ _id: 'main' }, { $push: { slides: newSlide } });
     res.json({ ok: true, slide: newSlide });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
@@ -304,10 +307,7 @@ app.post('/api/slider/delete', async (req, res) => {
     if (user.role !== 'owner') throw new Error('للمالك فقط');
     const { slideId } = req.body;
     
-    await db.collection('slider').updateOne(
-      { _id: 'main' },
-      { $pull: { slides: { id: slideId } } }
-    );
+    await db.collection('slider').updateOne({ _id: 'main' }, { $pull: { slides: { id: slideId } } });
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
