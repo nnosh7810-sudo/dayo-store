@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // زيادة الحجم لاستيعاب الصور
 app.use(express.static('public'));
 
 // ⚠️ ضع التوكن الجديد هنا
