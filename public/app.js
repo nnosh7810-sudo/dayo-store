@@ -5,12 +5,11 @@ let userRole = 'user';
 let userInfo = null;
 let nav1Initialized = false;
 let initDataGlobal = "";
+let currentBase64Image = ""; // متغير لحفظ الصورة المختارة
 
-// إخفاء كل الصفحات وإظهار الشاحنة فقط
 document.getElementById('page-nav').classList.remove('active');
 document.getElementById('page-admin').classList.remove('active');
 document.getElementById('page-empty').classList.remove('active');
-if(document.getElementById('page-home')) document.getElementById('page-home').classList.remove('active');
 document.getElementById('page-truck').classList.add('active');
 
 async function apiCall(endpoint, body = {}) {
@@ -31,8 +30,6 @@ async function fetchUserRole() {
       userRole = data.user.role;
       userInfo = data.user;
       if (nav1Initialized) initNav1(); 
-      
-      // بعد جلب الصلاحيات، نقوم بتحميل بيانات المتجر (الهيدر)
       loadStoreData();
     }
   } catch (err) { console.error(err); }
@@ -58,9 +55,7 @@ document.querySelectorAll('.truck-button').forEach(button => {
             button.classList.add('done');
             setTimeout(() => {
               document.getElementById('page-truck').classList.remove('active');
-              // الانتقال للصفحة الرئيسية الجديدة
               document.getElementById('page-home').classList.add('active');
-              // إظهار الشريط السفلي فوقها
               document.getElementById('page-nav').classList.add('active');
               if (!nav1Initialized) initNav1();
             }, 800);
@@ -117,7 +112,6 @@ function initNav1() {
     if (currentTabs[i].key === 'admin') {
       openAdminPanel();
     } else {
-      // عند الضغط على أي زر آخر، نعود للرئيسية
       document.getElementById('page-admin').classList.remove('active');
       document.getElementById('page-empty').classList.remove('active');
       document.getElementById('page-home').classList.add('active');
@@ -127,7 +121,7 @@ function initNav1() {
   nav1Initialized = true;
 }
 
-// ====== إعدادات المتجر (الهيدر) ======
+// ====== دوال إعدادات المتجر ======
 async function loadStoreData() {
   const data = await apiCall('/api/store');
   if (data.ok && data.store) {
@@ -140,13 +134,11 @@ async function loadStoreData() {
     const editLogoBtn = document.getElementById('edit-logo-btn');
 
     if (data.store.cover) coverEl.style.backgroundImage = `url('${data.store.cover}')`;
-    
     if (data.store.logo) {
       logoEl.style.backgroundImage = `url('${data.store.logo}')`;
       editLogoBtn.style.display = 'none';
     }
 
-    // إظهار أزرار القلم للمالك فقط
     if (userRole === 'owner') {
       document.getElementById('edit-cover-btn').style.display = 'flex';
       if (!data.store.logo) editLogoBtn.style.display = 'flex';
@@ -170,7 +162,62 @@ async function editLogo() {
   }
 }
 
-// ====== فتح لوحة التحكم ======
+// ====== ضغط الصور وتحويلها إلى Base64 ======
+function compressImage(file, maxWidth = 400, maxHeight = 400) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = event => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // تحويل الصورة إلى Base64 بجودة 0.7 (لتقليل الحجم)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+        resolve(dataUrl);
+      };
+      img.onerror = error => reject(error);
+    };
+    reader.onerror = error => reject(error);
+  });
+}
+
+async function handleImageUpload(input, previewId) {
+  const file = input.files[0];
+  if (!file) return;
+
+  try {
+    const base64 = await compressImage(file);
+    currentBase64Image = base64;
+    document.getElementById(previewId).style.backgroundImage = `url('${base64}')`;
+    document.getElementById(previewId).innerText = ''; // إخفاء النص
+  } catch (err) {
+    alert('حدث خطأ أثناء معالجة الصورة');
+    console.error(err);
+  }
+}
+
+// ====== لوحة التحكم ======
 async function openAdminPanel() {
   document.getElementById('page-home').classList.remove('active');
   document.getElementById('page-nav').classList.remove('active');
@@ -256,11 +303,20 @@ async function openAdminPanel() {
 
   content.innerHTML = `
     <div style="background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-      <h3 style="margin-top: 0; color: white;">إضافة منتج جديد</h3>
+      <h3 style="margin-top: 0; color: white;">إضافة / تعديل منتج</h3>
       <input type="text" id="new-prod-name" placeholder="اسم المنتج" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
       <textarea id="new-prod-desc" placeholder="وصف المنتج..." style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box; resize: none;"></textarea>
-      <input type="text" id="new-prod-img" placeholder="رابط الصورة (اختياري)" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
       
+      <!-- حقل رفع الصورة -->
+      <div style="margin-bottom: 8px;">
+        <label for="image-upload" style="display: block; color: #a0c4ff; font-size: 12px; margin-bottom: 5px;">صورة المنتج (اختياري):</label>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <input type="file" id="image-upload" accept="image/*" onchange="handleImageUpload(this, 'image-preview')" style="display: none;">
+          <label for="image-upload" style="background: #2a3b5c; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-size: 12px;">اختر صورة</label>
+          <div id="image-preview" style="width: 40px; height: 40px; border-radius: 5px; background: #0d1526; background-size: cover; background-position: center; display: flex; justify-content: center; align-items: center; color: #666; font-size: 10px;">لا توجد</div>
+        </div>
+      </div>
+
       <p style="color: #a0c4ff; font-size: 12px; margin: 5px 0;">الأسعار (اترك الحقل فارغاً إذا لم ترده):</p>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
         <input type="number" id="price-usd" placeholder="دولار $" style="padding: 8px; border-radius: 5px; border: none;">
@@ -269,7 +325,8 @@ async function openAdminPanel() {
         <input type="number" id="price-sar" placeholder="ريال 🇸🇦" style="padding: 8px; border-radius: 5px; border: none;">
       </div>
 
-      <button onclick="addProduct()" style="background: #6A0DAD; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">إضافة المنتج</button>
+      <button onclick="addProduct()" id="submit-btn" style="background: #6A0DAD; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">إضافة المنتج</button>
+      <button id="cancel-edit-btn" onclick="openAdminPanel()" style="display: none; background: #e74c3c; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-top: 8px;">إلغاء التعديل</button>
     </div>
 
     <h3 style="color: white;">المنتجات المضافة</h3>
@@ -292,12 +349,12 @@ async function openAdminPanel() {
       <div>${staffHTML}</div>
     ` : ''}
   `;
+  currentBase64Image = ""; // إعادة تعيين الصورة عند فتح اللوحة
 }
 
 async function addProduct() {
   const name = document.getElementById('new-prod-name').value;
   const description = document.getElementById('new-prod-desc').value;
-  const image = document.getElementById('new-prod-img').value;
   
   const prices = {
     usd: parseFloat(document.getElementById('price-usd').value) || 0,
@@ -308,9 +365,58 @@ async function addProduct() {
 
   if(!name) return alert('أدخل اسم المنتج على الأقل');
   
-  const res = await apiCall('/api/products/add', { name, description, image, prices });
+  const res = await apiCall('/api/products/add', { name, description, image: currentBase64Image, prices });
   if(res.ok) {
     tg.showAlert('تمت الإضافة بنجاح ✅');
+    openAdminPanel();
+  } else {
+    tg.showAlert(res.error);
+  }
+}
+
+async function editProductForm(id) {
+  const data = await apiCall('/api/products');
+  const product = data.products.find(p => p.id === id);
+  if(!product) return;
+
+  document.getElementById('new-prod-name').value = product.name;
+  document.getElementById('new-prod-desc').value = product.description;
+  
+  if(product.image) {
+    document.getElementById('image-preview').style.backgroundImage = `url('${product.image}')`;
+    document.getElementById('image-preview').innerText = '';
+    currentBase64Image = product.image;
+  }
+
+  document.getElementById('price-usd').value = product.prices?.usd || '';
+  document.getElementById('price-ton').value = product.prices?.ton || '';
+  document.getElementById('price-stars').value = product.prices?.stars || '';
+  document.getElementById('price-sar').value = product.prices?.sar || '';
+
+  const submitBtn = document.getElementById('submit-btn');
+  submitBtn.textContent = 'حفظ التعديلات';
+  submitBtn.style.background = '#f39c12';
+  submitBtn.setAttribute('onclick', `saveEdit('${id}')`);
+  
+  document.getElementById('cancel-edit-btn').style.display = 'block';
+  
+  document.getElementById('page-admin').scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function saveEdit(id) {
+  const name = document.getElementById('new-prod-name').value;
+  const description = document.getElementById('new-prod-desc').value;
+  
+  const prices = {
+    usd: parseFloat(document.getElementById('price-usd').value) || 0,
+    ton: parseFloat(document.getElementById('price-ton').value) || 0,
+    stars: parseFloat(document.getElementById('price-stars').value) || 0,
+    sar: parseFloat(document.getElementById('price-sar').value) || 0,
+  };
+
+  const res = await apiCall('/api/products/edit', { productId: id, name, description, image: currentBase64Image, prices });
+  if(res.ok) {
+    tg.showAlert('تم التعديل بنجاح ✅');
     openAdminPanel();
   } else {
     tg.showAlert(res.error);
@@ -322,49 +428,6 @@ async function deleteProduct(id) {
   const res = await apiCall('/api/products/delete', { productId: id });
   if(res.ok) openAdminPanel();
   else alert(res.error);
-}
-
-async function editProductForm(id) {
-  const data = await apiCall('/api/products');
-  const product = data.products.find(p => p.id === id);
-  if(!product) return;
-
-  document.getElementById('new-prod-name').value = product.name;
-  document.getElementById('new-prod-desc').value = product.description;
-  document.getElementById('new-prod-img').value = product.image;
-  
-  document.getElementById('price-usd').value = product.prices?.usd || '';
-  document.getElementById('price-ton').value = product.prices?.ton || '';
-  document.getElementById('price-stars').value = product.prices?.stars || '';
-  document.getElementById('price-sar').value = product.prices?.sar || '';
-
-  const addBtn = document.querySelector('button[onclick="addProduct()"]');
-  addBtn.textContent = 'حفظ التعديلات';
-  addBtn.style.background = '#f39c12';
-  addBtn.setAttribute('onclick', `saveEdit('${id}')`);
-  
-  document.getElementById('page-admin').scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-async function saveEdit(id) {
-  const name = document.getElementById('new-prod-name').value;
-  const description = document.getElementById('new-prod-desc').value;
-  const image = document.getElementById('new-prod-img').value;
-  
-  const prices = {
-    usd: parseFloat(document.getElementById('price-usd').value) || 0,
-    ton: parseFloat(document.getElementById('price-ton').value) || 0,
-    stars: parseFloat(document.getElementById('price-stars').value) || 0,
-    sar: parseFloat(document.getElementById('price-sar').value) || 0,
-  };
-
-  const res = await apiCall('/api/products/edit', { productId: id, name, description, image, prices });
-  if(res.ok) {
-    tg.showAlert('تم التعديل بنجاح ✅');
-    openAdminPanel();
-  } else {
-    tg.showAlert(res.error);
-  }
 }
 
 async function promoteUser() {
@@ -393,13 +456,11 @@ async function updateRole(targetId, newRole) {
   }
 }
 
-// إغلاق اللوحة
 document.getElementById('close-admin').addEventListener('click', () => {
   document.getElementById('page-admin').classList.remove('active');
   document.getElementById('page-empty').classList.add('active');
 });
 
-// دالة العودة من الشاشة الفارغة إلى الصفحة الرئيسية
 function returnToNav() {
   document.getElementById('page-empty').classList.remove('active');
   document.getElementById('page-home').classList.add('active');
