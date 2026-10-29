@@ -26,7 +26,7 @@
     </button>
   </div>
 
-  <!-- الصفحة الرئيسية الجديدة (الهيدر) -->
+  <!-- الصفحة الرئيسية (الهيدر) -->
   <div id="page-home" class="page" style="background-color: #050814; padding: 15px; overflow-y: auto; padding-bottom: 100px;">
     
     <!-- الهيدر -->
@@ -37,6 +37,8 @@
         <button id="edit-cover-btn" onclick="editCover()" style="display: none; position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 8px; padding: 8px; cursor: pointer;">
           ✏️
         </button>
+        <!-- حقل مخفي لاختيار صورة الغلاف -->
+        <input type="file" id="cover-upload" accept="image/*" style="display: none;" onchange="handleCoverUpload(this)">
       </div>
 
       <!-- الدائرة (اللوجو) -->
@@ -45,6 +47,8 @@
         <button id="edit-logo-btn" onclick="editLogo()" style="display: none; background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 50%; width: 30px; height: 30px; font-size: 12px; cursor: pointer;">
           ✏️
         </button>
+        <!-- حقل مخفي لاختيار صورة اللوجو -->
+        <input type="file" id="logo-upload" accept="image/*" style="display: none;" onchange="handleLogoUpload(this)">
       </div>
 
       <!-- اسم المتجر والأرقام -->
@@ -61,7 +65,7 @@
       </div>
     </div>
 
-    <!-- مساحة فارغة حالياً (ستملؤها لاحقاً بالمنتجات) -->
+    <!-- مساحة فارغة حالياً -->
     <div style="text-align: center; color: #A0C4FF; margin-top: 50px;">
       <p>مرحباً بك في المتجر!</p>
     </div>
