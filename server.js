@@ -10,8 +10,7 @@ app.use(express.static('public'));
 // ⚠️ ضع التوكن الجديد هنا
 const BOT_TOKEN = '8944449366:AAF-2I10o__647D8eAxlatu_pipO1n8KCW4';
 
-// ⚠️ ضع رابط قاعدة البيانات هنا (استبدل النص العربي)
-// إذا كنت قد أضفت المتغير في Render، فالكود سيقرأه تلقائياً
+// ⚠️ تأكد أن متغير البيئة مضاف في Render
 const MONGODB_URI = process.env.MONGODB_URI;
 
 const client = new MongoClient(MONGODB_URI, {
@@ -50,6 +49,13 @@ async function connectDB() {
         usersCount: 12846,
         onlineCount: 1245
       });
+    }
+
+    // التأكد من وجود مجموعة السلايدر
+    const sliderCollection = db.collection('slider');
+    const sliderExists = await sliderCollection.findOne({ _id: 'main' });
+    if (!sliderExists) {
+      await sliderCollection.insertOne({ _id: 'main', slides: [] });
     }
 
   } catch (err) {
@@ -254,6 +260,55 @@ app.post('/api/store/update', async (req, res) => {
     await db.collection('store').updateOne({ _id: 'main' }, { $set: updateData });
     const store = await db.collection('store').findOne({ _id: 'main' });
     res.json({ ok: true, store });
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
+// =========================================================
+// مسارات السلايدر الجديدة
+// =========================================================
+app.post('/api/slider', async (req, res) => {
+  try {
+    await getUserFromReq(req);
+    const slider = await db.collection('slider').findOne({ _id: 'main' });
+    res.json({ ok: true, slides: slider?.slides || [] });
+  } catch (err) { res.status(401).json({ ok: false }); }
+});
+
+app.post('/api/slider/add', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (user.role !== 'owner') throw new Error('للمالك فقط');
+    const { image, title, btnText, btnLink } = req.body;
+    
+    if (!image) throw new Error('يجب إضافة صورة');
+    
+    const newSlide = { 
+      id: Date.now().toString(), 
+      image, 
+      title: title || '', 
+      btnText: btnText || '', 
+      btnLink: btnLink || '' 
+    };
+    
+    await db.collection('slider').updateOne(
+      { _id: 'main' },
+      { $push: { slides: newSlide } }
+    );
+    res.json({ ok: true, slide: newSlide });
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/slider/delete', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (user.role !== 'owner') throw new Error('للمالك فقط');
+    const { slideId } = req.body;
+    
+    await db.collection('slider').updateOne(
+      { _id: 'main' },
+      { $pull: { slides: { id: slideId } } }
+    );
+    res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
