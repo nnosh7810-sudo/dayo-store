@@ -1,35 +1,66 @@
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
-const fs = require('fs');
+const { MongoClient, ServerApiVersion } = require('mongodb');
 
 const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
-// ⚠️ ضع التوكن الجديد هنا (الأفضل استخدام متغيرات البيئة على Render، لكن هذا يعمل)
+// ⚠️ ضع التوكن الجديد هنا
 const BOT_TOKEN = '8944449366:AAF-2I10o__647D8eAxlatu_pipO1n8KCW4';
 
-const DB_FILE = path.join(__dirname, 'database.json');
+// ⚠️ ضع رابط قاعدة البيانات هنا (استبدل النص العربي)
+// إذا كنت قد أضفت المتغير في Render، فالكود سيقرأه تلقائياً
+const MONGODB_URI = process.env.MONGODB_URI;
 
-// إنشاء قاعدة البيانات إذا لم تكن موجودة مع القيم الافتراضية للمتجر
-if (!fs.existsSync(DB_FILE)) {
-  fs.writeFileSync(DB_FILE, JSON.stringify({
-    users: { '51442749': { role: 'owner', name: 'المالك' } },
-    products: [],
-    store: {
-      name: 'DAYO STORE',
-      cover: '',
-      logo: '',
-      usersCount: 12846,
-      onlineCount: 1245
+const client = new MongoClient(MONGODB_URI, {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  }
+});
+
+let db;
+
+// دالة الاتصال بقاعدة البيانات وإنشاء البيانات الافتراضية
+async function connectDB() {
+  try {
+    await client.connect();
+    db = client.db('dayoStore'); // اسم قاعدة البيانات
+    console.log('✅ متصل بقاعدة بيانات MongoDB');
+
+    // التأكد من وجود المالك
+    const usersCollection = db.collection('users');
+    const ownerExists = await usersCollection.findOne({ _id: '51442749' });
+    if (!ownerExists) {
+      await usersCollection.insertOne({ _id: '51442749', role: 'owner', name: 'المالك' });
     }
-  }, null, 2));
+
+    // التأكد من وجود إعدادات المتجر
+    const storeCollection = db.collection('store');
+    const storeExists = await storeCollection.findOne({ _id: 'main' });
+    if (!storeExists) {
+      await storeCollection.insertOne({
+        _id: 'main',
+        name: 'DAYO STORE',
+        cover: '',
+        logo: '',
+        usersCount: 12846,
+        onlineCount: 1245
+      });
+    }
+
+  } catch (err) {
+    console.error('❌ فشل الاتصال بقاعدة البيانات:', err.message);
+  }
 }
+connectDB();
 
-const getDB = () => JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-const saveDB = (data) => fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-
+// =========================================================
+// دوال مساعدة
+// =========================================================
 function verifyTelegramData(initData, botToken) {
   const urlParams = new URLSearchParams(initData);
   const hash = urlParams.get('hash');
@@ -41,41 +72,41 @@ function verifyTelegramData(initData, botToken) {
   return { user: JSON.parse(urlParams.get('user')) };
 }
 
-function getUserFromReq(req) {
+async function getUserFromReq(req) {
   const { initData } = req.body;
   if (!initData) throw new Error('مفقود');
   const parsed = verifyTelegramData(initData, BOT_TOKEN);
-  const db = getDB();
   const userId = parsed.user.id.toString();
-  const dbUser = db.users[userId] || { role: 'user', name: parsed.user.first_name };
-  return { id: userId, ...dbUser };
+  
+  const dbUser = await db.collection('users').findOne({ _id: userId });
+  return { id: userId, role: dbUser?.role || 'user', name: dbUser?.name || parsed.user.first_name };
 }
 
-// --- جلب الصلاحيات ---
-app.post('/api/me', (req, res) => {
+// =========================================================
+// المسارات (API)
+// =========================================================
+
+app.post('/api/me', async (req, res) => {
   try {
-    const user = getUserFromReq(req);
+    const user = await getUserFromReq(req);
     res.json({ ok: true, user });
   } catch (err) { res.status(401).json({ ok: false }); }
 });
 
-// --- جلب المنتجات ---
-app.post('/api/products', (req, res) => {
+app.post('/api/products', async (req, res) => {
   try {
-    getUserFromReq(req);
-    res.json({ ok: true, products: getDB().products });
+    await getUserFromReq(req);
+    const products = await db.collection('products').find().toArray();
+    res.json({ ok: true, products });
   } catch (err) { res.status(401).json({ ok: false }); }
 });
 
-// --- إضافة منتج جديد ---
-app.post('/api/products/add', (req, res) => {
+app.post('/api/products/add', async (req, res) => {
   try {
-    const user = getUserFromReq(req);
+    const user = await getUserFromReq(req);
     if (user.role === 'user') throw new Error('ليس لديك صلاحية');
 
     const { name, description, image, prices } = req.body; 
-    
-    const db = getDB();
     const newProduct = {
       id: Date.now().toString(),
       name,
@@ -86,29 +117,27 @@ app.post('/api/products/add', (req, res) => {
       creatorName: user.name
     };
     
-    db.products.push(newProduct);
-    saveDB(db);
+    await db.collection('products').insertOne(newProduct);
     res.json({ ok: true, product: newProduct });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// --- تعديل منتج ---
-app.post('/api/products/edit', (req, res) => {
+app.post('/api/products/edit', async (req, res) => {
   try {
-    const user = getUserFromReq(req);
+    const user = await getUserFromReq(req);
     const { productId, name, description, image, prices } = req.body;
-    const db = getDB();
     
-    const product = db.products.find(p => p.id === productId);
+    const product = await db.collection('products').findOne({ id: productId });
     if (!product) throw new Error('المنتج غير موجود');
     
     if (user.role === 'owner' || user.role === 'admin' || (user.role === 'moderator' && product.creatorId === user.id)) {
-      product.name = name || product.name;
-      product.description = description || product.description;
-      product.image = image !== undefined ? image : product.image;
-      product.prices = prices || product.prices;
-      
-      saveDB(db);
+      const updateData = {};
+      if (name) updateData.name = name;
+      if (description) updateData.description = description;
+      if (image !== undefined) updateData.image = image;
+      if (prices) updateData.prices = prices;
+
+      await db.collection('products').updateOne({ id: productId }, { $set: updateData });
       res.json({ ok: true });
     } else {
       throw new Error('ليس لديك صلاحية لتعديل هذا المنتج');
@@ -116,20 +145,16 @@ app.post('/api/products/edit', (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// --- حذف منتج ---
-app.post('/api/products/delete', (req, res) => {
+app.post('/api/products/delete', async (req, res) => {
   try {
-    const user = getUserFromReq(req);
+    const user = await getUserFromReq(req);
     const { productId } = req.body;
-    const db = getDB();
     
-    const index = db.products.findIndex(p => p.id === productId);
-    if (index === -1) throw new Error('المنتج غير موجود');
+    const product = await db.collection('products').findOne({ id: productId });
+    if (!product) throw new Error('المنتج غير موجود');
     
-    const product = db.products[index];
     if (user.role === 'owner' || user.role === 'admin' || (user.role === 'moderator' && product.creatorId === user.id)) {
-      db.products.splice(index, 1);
-      saveDB(db);
+      await db.collection('products').deleteOne({ id: productId });
       res.json({ ok: true });
     } else {
       throw new Error('ليس لديك صلاحية لحذف هذا المنتج');
@@ -137,128 +162,102 @@ app.post('/api/products/delete', (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// --- ترقية مستخدم ---
-app.post('/api/users/promote', (req, res) => {
+app.post('/api/users/promote', async (req, res) => {
   try {
-    const user = getUserFromReq(req);
+    const user = await getUserFromReq(req);
     const { targetId, newRole } = req.body;
-    const db = getDB();
+    
     if (user.role === 'owner') {
-      db.users[targetId] = { role: newRole, name: db.users[targetId]?.name || 'مستخدم' };
+      await db.collection('users').updateOne(
+        { _id: targetId }, 
+        { $set: { role: newRole } }, 
+        { upsert: true }
+      );
     } else if (user.role === 'admin' && newRole === 'moderator') {
-      db.users[targetId] = { role: 'moderator', name: db.users[targetId]?.name || 'مستخدم' };
+      await db.collection('users').updateOne(
+        { _id: targetId }, 
+        { $set: { role: 'moderator' } }, 
+        { upsert: true }
+      );
     } else {
       throw new Error('ليس لديك صلاحية');
     }
-    saveDB(db);
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// =========================================================
-// مسارات إدارة المشرفين
-// =========================================================
-
-// --- جلب قائمة المشرفين (للمالك والمسؤول فقط) ---
-app.post('/api/users/list', (req, res) => {
+app.post('/api/users/list', async (req, res) => {
   try {
-    const user = getUserFromReq(req);
+    const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') {
       throw new Error('ليس لديك صلاحية');
     }
     
-    const db = getDB();
-    const staffList = Object.entries(db.users)
-      .filter(([id, u]) => u.role === 'admin' || u.role === 'moderator')
-      .map(([id, u]) => ({ id, ...u }));
+    const staffList = await db.collection('users')
+      .find({ role: { $in: ['admin', 'moderator'] } })
+      .toArray();
 
-    res.json({ ok: true, staff: staffList });
+    const formattedStaff = staffList.map(u => ({ id: u._id, role: u.role, name: u.name || 'مستخدم' }));
+    res.json({ ok: true, staff: formattedStaff });
   } catch (err) {
     res.status(403).json({ ok: false, error: err.message });
   }
 });
 
-// --- تعديل رتبة أو إزالة مشرف ---
-app.post('/api/users/update-role', (req, res) => {
+app.post('/api/users/update-role', async (req, res) => {
   try {
-    const requester = getUserFromReq(req);
+    const requester = await getUserFromReq(req);
     const { targetId, newRole } = req.body;
     
     if (requester.role !== 'owner' && requester.role !== 'admin') {
       throw new Error('ليس لديك صلاحية');
     }
 
-    const db = getDB();
-    const targetUser = db.users[targetId];
+    const targetUser = await db.collection('users').findOne({ _id: targetId });
     if (!targetUser) throw new Error('المستخدم غير موجود');
     
-    // منع المسؤول من تعديل المالك أو المسؤولين الآخرين
     if (requester.role === 'admin' && (targetUser.role === 'owner' || targetUser.role === 'admin')) {
       throw new Error('ليس لديك صلاحية لتعديل هذا الشخص');
     }
 
     if (newRole === 'user') {
-      delete db.users[targetId];
+      await db.collection('users').deleteOne({ _id: targetId });
     } else {
-      db.users[targetId].role = newRole;
+      await db.collection('users').updateOne({ _id: targetId }, { $set: { role: newRole } });
     }
 
-    saveDB(db);
     res.json({ ok: true });
   } catch (err) {
     res.status(403).json({ ok: false, error: err.message });
   }
 });
 
-// =========================================================
-// مسارات إعدادات المتجر (الهيدر)
-// =========================================================
-
-// جلب إعدادات المتجر
-app.post('/api/store', (req, res) => {
+app.post('/api/store', async (req, res) => {
   try {
-    getUserFromReq(req);
-    const db = getDB();
-    // إذا لم تكن موجودة، نرسل قيم افتراضية
-    res.json({ 
-      ok: true, 
-      store: db.store || { 
-        name: 'DAYO STORE', 
-        cover: '', 
-        logo: '', 
-        usersCount: 12846,
-        onlineCount: 1245 
-      } 
-    });
+    await getUserFromReq(req);
+    const store = await db.collection('store').findOne({ _id: 'main' });
+    res.json({ ok: true, store });
   } catch (err) { res.status(401).json({ ok: false }); }
 });
 
-// حفظ إعدادات المتجر (للمالك فقط)
-app.post('/api/store/update', (req, res) => {
+app.post('/api/store/update', async (req, res) => {
   try {
-    const user = getUserFromReq(req);
+    const user = await getUserFromReq(req);
     if (user.role !== 'owner') throw new Error('للمالك فقط');
     
-    const db = getDB();
     const { name, cover, logo } = req.body;
-    
-    // دمج البيانات القديمة مع الجديدة
-    db.store = {
-      name: name || db.store?.name || 'DAYO STORE',
-      cover: cover !== undefined ? cover : (db.store?.cover || ''),
-      logo: logo !== undefined ? logo : (db.store?.logo || ''),
-      usersCount: db.store?.usersCount || 12846,
-      onlineCount: db.store?.onlineCount || 1245
-    };
-    
-    saveDB(db);
-    res.json({ ok: true, store: db.store });
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (cover !== undefined) updateData.cover = cover;
+    if (logo !== undefined) updateData.logo = logo;
+
+    await db.collection('store').updateOne({ _id: 'main' }, { $set: updateData });
+    const store = await db.collection('store').findOne({ _id: 'main' });
+    res.json({ ok: true, store });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// =========================================================
 // مسار فحص الحالة (Health Check) لـ UptimeRobot
-// =========================================================
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.head('/health', (req, res) => res.status(200).end());
 
