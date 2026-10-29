@@ -5,7 +5,7 @@ let userRole = 'user';
 let userInfo = null;
 let nav1Initialized = false;
 let initDataGlobal = "";
-let currentBase64Image = ""; // متغير لحفظ الصورة المختارة
+let currentBase64Image = ""; // متغير لحفظ الصورة المختارة للمنتج
 
 document.getElementById('page-nav').classList.remove('active');
 document.getElementById('page-admin').classList.remove('active');
@@ -146,19 +146,56 @@ async function loadStoreData() {
   }
 }
 
-async function editCover() {
-  const url = prompt('أدخل رابط صورة الغلاف (URL):');
-  if (url !== null) {
-    await apiCall('/api/store/update', { cover: url });
-    loadStoreData();
+// دوال فتح معرض الصور (جديدة)
+function editCover() {
+  document.getElementById('cover-upload').click();
+}
+
+function editLogo() {
+  document.getElementById('logo-upload').click();
+}
+
+// معالجة رفع صورة الغلاف
+async function handleCoverUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  try {
+    // نستخدم نفس دالة الضغط، ولكن بأبعاد أكبر للغلاف
+    const base64 = await compressImage(file, 800, 400); 
+    
+    const res = await apiCall('/api/store/update', { cover: base64 });
+    if (res.ok) {
+      tg.showAlert('تم تحديث الغلاف بنجاح ✅');
+      loadStoreData(); 
+    } else {
+      tg.showAlert(res.error || 'فشل التحديث');
+    }
+  } catch (err) {
+    alert('حدث خطأ أثناء معالجة الصورة');
+    console.error(err);
   }
 }
 
-async function editLogo() {
-  const url = prompt('أدخل رابط صورة اللوجو (URL):');
-  if (url !== null) {
-    await apiCall('/api/store/update', { logo: url });
-    loadStoreData();
+// معالجة رفع صورة اللوجو
+async function handleLogoUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  try {
+    // اللوجو دائري، لذا نضغطه بأبعاد مربعة
+    const base64 = await compressImage(file, 400, 400); 
+    
+    const res = await apiCall('/api/store/update', { logo: base64 });
+    if (res.ok) {
+      tg.showAlert('تم تحديث اللوجو بنجاح ✅');
+      loadStoreData(); 
+    } else {
+      tg.showAlert(res.error || 'فشل التحديث');
+    }
+  } catch (err) {
+    alert('حدث خطأ أثناء معالجة الصورة');
+    console.error(err);
   }
 }
 
@@ -349,7 +386,7 @@ async function openAdminPanel() {
       <div>${staffHTML}</div>
     ` : ''}
   `;
-  currentBase64Image = ""; // إعادة تعيين الصورة عند فتح اللوحة
+  currentBase64Image = ""; 
 }
 
 async function addProduct() {
