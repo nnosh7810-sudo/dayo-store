@@ -11,6 +11,7 @@
   "license": "ISC",
   "dependencies": {
     "@tma.js/init-data-node": "^2.0.8",
-    "express": "^5.3.0"
+    "express": "^5.3.0",
+    "mongodb": "^7.7.0"
   }
 }
