@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="style.css">
 
   <style>
-    /* تنسيقات الصفحة الرئيسية الاحترافية */
+    /* ===== الصفحة الرئيسية ===== */
     #page-home {
       background: radial-gradient(circle at top right, #1a1a3a 0%, #050814 50%);
       padding: 15px;
@@ -20,229 +20,241 @@
 
     /* الهيدر */
     .profile-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-      position: relative;
-      z-index: 2;
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 20px; position: relative; z-index: 2;
     }
-    .logo-area {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
+    .logo-area { display: flex; align-items: center; gap: 10px; }
     .logo-icon {
-      width: 45px;
-      height: 45px;
+      width: 45px; height: 45px;
       background: linear-gradient(135deg, #4A90E2, #8A2BE2);
-      border-radius: 12px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      font-weight: bold;
-      color: white;
-      font-size: 24px;
+      border-radius: 12px; display: flex; justify-content: center; align-items: center;
+      font-weight: bold; color: white; font-size: 24px;
       box-shadow: 0 0 15px rgba(138, 43, 226, 0.6);
+      background-size: cover; background-position: center;
     }
-    .logo-text h1 {
-      margin: 0;
-      color: white;
-      font-size: 20px;
-      letter-spacing: 1px;
-    }
-    .logo-text p {
-      margin: 0;
-      color: #6A0DAD;
-      font-size: 10px;
-      letter-spacing: 3px;
-    }
+    .logo-text h1 { margin: 0; color: white; font-size: 20px; letter-spacing: 1px; }
+    .logo-text p { margin: 0; color: #6A0DAD; font-size: 10px; letter-spacing: 3px; }
     .menu-btn {
-      background: #111a2e;
-      border: 1px solid #2a3b5c;
-      border-radius: 10px;
-      width: 40px;
-      height: 40px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      color: white;
+      background: #111a2e; border: 1px solid #2a3b5c; border-radius: 10px;
+      width: 40px; height: 40px; display: flex; justify-content: center;
+      align-items: center; color: white;
     }
 
-    /* أزرار الإحصائيات */
+    /* الإحصائيات */
     .stats-row {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 20px;
-      z-index: 2;
-      position: relative;
+      display: flex; gap: 10px; margin-bottom: 20px;
+      z-index: 2; position: relative;
     }
     .stat-box {
-      flex: 1;
-      background: rgba(17, 26, 46, 0.6);
-      border: 1px solid #1c2a45;
-      border-radius: 12px;
-      padding: 8px 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      color: #A0C4FF;
-      font-size: 12px;
-      backdrop-filter: blur(10px);
+      flex: 1; background: rgba(17, 26, 46, 0.6); border: 1px solid #1c2a45;
+      border-radius: 12px; padding: 8px 12px; display: flex;
+      justify-content: space-between; align-items: center;
+      color: #A0C4FF; font-size: 12px; backdrop-filter: blur(10px);
     }
-    .stat-box strong {
-      color: white;
-      font-size: 14px;
-    }
+    .stat-box strong { color: white; font-size: 14px; }
 
-    /* البطاقات الدائرية (الأقسام) */
+    /* شبكة الأقسام */
     .grid-menu {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 10px;
-      margin-bottom: 20px;
-      z-index: 2;
-      position: relative;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+      margin-bottom: 20px; z-index: 2; position: relative;
     }
     .grid-item {
       background: linear-gradient(180deg, #111a2e 0%, #0a101f 100%);
-      border: 1px solid #1c2a45;
-      border-radius: 16px;
-      padding: 15px 5px;
-      text-align: center;
-      cursor: pointer;
+      border: 1px solid #1c2a45; border-radius: 16px;
+      padding: 15px 5px; text-align: center; cursor: pointer;
       transition: transform 0.2s;
     }
     .grid-item:active { transform: scale(0.95); }
     .grid-icon {
-      width: 40px;
-      height: 40px;
-      margin: 0 auto 8px;
-      border-radius: 10px;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      font-size: 20px;
-      background: rgba(255,255,255,0.05);
-    }
-    .grid-title {
-      color: white;
-      font-size: 11px;
-      font-weight: 500;
-    }
-    
-    /* السلايدر */
-    .slider-container {
-      width: 100%;
+      width: 40px; height: 40px; margin: 0 auto 8px; border-radius: 10px;
+      display: flex; justify-content: center; align-items: center;
+      font-size: 20px; background: rgba(255,255,255,0.05);
       overflow: hidden;
-      border-radius: 20px;
-      margin-bottom: 20px;
-      position: relative;
-      background: #111a2e;
+    }
+    .grid-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: 10px; }
+    .grid-title { color: white; font-size: 11px; font-weight: 500; line-height: 1.3; }
+
+    /* ===== الأقسام الديناميكية ===== */
+    .dynamic-section {
+      background: linear-gradient(180deg, #111a2e 0%, #0a101f 100%);
+      border: 1px solid #1c2a45; border-radius: 16px;
+      padding: 15px; margin-bottom: 20px; position: relative; z-index: 2;
+    }
+    .dynamic-section h2 {
+      color: white; margin: 0 0 12px; font-size: 16px; font-weight: 700;
+    }
+    .dynamic-section p {
+      color: #A0C4FF; font-size: 13px; line-height: 1.7; margin: 0 0 10px;
+    }
+    .dynamic-section > img {
+      width: 100%; border-radius: 12px; margin-bottom: 10px; display: block;
+      max-height: 200px; object-fit: cover;
+    }
+    .dynamic-section .section-btn {
+      background: linear-gradient(90deg, #4A90E2, #8A2BE2);
+      color: white; padding: 10px 20px; border-radius: 20px;
+      text-decoration: none; font-size: 13px; font-weight: bold;
+      display: inline-block; margin-top: 5px;
+    }
+
+    /* شبكة منتجات */
+    .dynamic-products {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    }
+    .prod-card {
+      background: #152a47; border-radius: 12px; overflow: hidden;
       border: 1px solid #2a3b5c;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-      z-index: 2;
+    }
+    .prod-card img { width: 100%; height: 100px; object-fit: cover; display: block; }
+    .prod-card .info { padding: 8px; }
+    .prod-card .info strong { color: white; font-size: 12px; display: block; }
+    .prod-card .info small { color: #A0C4FF; font-size: 10px; display: block; margin-top: 2px; }
+    .prod-card .info .price {
+      color: #4AE2A0; font-size: 12px; font-weight: bold; margin-top: 5px;
+    }
+
+    /* ===== السلايدر ===== */
+    .slider-container {
+      width: 100%; overflow: hidden; border-radius: 20px; margin-bottom: 20px;
+      position: relative; background: #111a2e; border: 1px solid #2a3b5c;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 2;
     }
     .slider-track {
-      display: flex;
-      transition: transform 0.4s ease-in-out;
-      height: 200px;
+      display: flex; transition: transform 0.4s ease-in-out; height: 200px;
     }
     .slide {
-      min-width: 100%;
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      padding: 20px;
-      box-sizing: border-box;
-      background-size: cover;
-      background-position: center;
+      min-width: 100%; position: relative; display: flex;
+      flex-direction: column; justify-content: center; padding: 20px;
+      box-sizing: border-box; background-size: cover; background-position: center;
     }
     .slide::before {
-      content: '';
-      position: absolute;
-      inset: 0;
+      content: ''; position: absolute; inset: 0;
       background: linear-gradient(to right, rgba(5,8,20,0.9) 0%, rgba(5,8,20,0.2) 100%);
       z-index: 1;
     }
-    .slide-content {
-      position: relative;
-      z-index: 2;
-    }
+    .slide-content { position: relative; z-index: 2; }
     .slide-badge {
-      background: linear-gradient(90deg, #4A90E2, #8A2BE2);
-      color: white;
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 10px;
-      font-weight: bold;
-      display: inline-block;
-      margin-bottom: 10px;
+      background: linear-gradient(90deg, #4A90E2, #8A2BE2); color: white;
+      padding: 4px 12px; border-radius: 20px; font-size: 10px;
+      font-weight: bold; display: inline-block; margin-bottom: 10px;
     }
     .slide-title {
-      color: white;
-      font-size: 22px;
-      font-weight: 800;
-      margin: 0 0 10px 0;
-      line-height: 1.3;
+      color: white; font-size: 22px; font-weight: 800;
+      margin: 0 0 10px 0; line-height: 1.3;
     }
     .slide-btn {
-      background: linear-gradient(90deg, #4A90E2, #8A2BE2);
-      color: white;
-      border: none;
-      padding: 8px 20px;
-      border-radius: 20px;
-      font-weight: bold;
-      font-size: 12px;
-      cursor: pointer;
-      text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      box-shadow: 0 4px 15px rgba(138, 43, 226, 0.4);
+      background: linear-gradient(90deg, #4A90E2, #8A2BE2); color: white;
+      border: none; padding: 8px 20px; border-radius: 20px;
+      font-weight: bold; font-size: 12px; cursor: pointer;
+      text-decoration: none; display: inline-flex; align-items: center;
+      gap: 5px; box-shadow: 0 4px 15px rgba(138, 43, 226, 0.4);
     }
     .slider-dots {
-      position: absolute;
-      bottom: 15px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 6px;
-      z-index: 3;
+      position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; z-index: 3;
     }
     .slider-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.3);
-      cursor: pointer;
-      transition: 0.3s;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: rgba(255,255,255,0.3); cursor: pointer; transition: 0.3s;
     }
-    .slider-dot.active {
-      background: #4A90E2;
-      width: 24px;
-      border-radius: 4px;
+    .slider-dot.active { background: #4A90E2; width: 24px; border-radius: 4px; }
+
+    .edit-btn {
+      display: none; position: absolute; background: rgba(0,0,0,0.7);
+      color: white; border: 1px solid #444; border-radius: 8px;
+      padding: 5px 10px; font-size: 12px; cursor: pointer; z-index: 10;
     }
 
-    /* أزرار إدارة الغلاف (للمالك) */
-    .edit-btn {
-      display: none;
-      position: absolute;
-      background: rgba(0,0,0,0.7);
-      color: white;
-      border: 1px solid #444;
-      border-radius: 8px;
-      padding: 5px 10px;
-      font-size: 12px;
-      cursor: pointer;
-      z-index: 10;
+    /* ===== لوحة التحكم: إدارة الأقسام ===== */
+    .admin-section-card {
+      background: #152a47; border-radius: 10px; padding: 12px;
+      margin-bottom: 10px; display: flex; justify-content: space-between;
+      align-items: flex-start; gap: 10px; flex-wrap: wrap;
     }
+    .admin-section-card .info { flex: 1; min-width: 140px; }
+    .admin-section-card .info strong { color: white; font-size: 14px; display: block; }
+    .admin-section-card .info small { color: #a0c4ff; font-size: 11px; display: block; margin-top: 3px; }
+    .admin-section-card .actions { display: flex; gap: 5px; flex-wrap: wrap; }
+    .admin-section-card .actions button {
+      border: none; padding: 5px 8px; border-radius: 5px;
+      cursor: pointer; font-size: 11px; color: white; white-space: nowrap;
+    }
+    .btn-up { background: #3498db; }
+    .btn-down { background: #2980b9; }
+    .btn-toggle { background: #f39c12; }
+    .btn-edit { background: #8A2BE2; }
+    .btn-delete { background: #e74c3c; }
+    .type-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 10px; color: white; margin-right: 5px;
+    }
+
+    /* نموذج إضافة/تعديل قسم */
+    .admin-form {
+      background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;
+    }
+    .admin-form h3 { margin-top: 0; color: white; font-size: 15px; }
+    .admin-form label {
+      color: #a0c4ff; font-size: 12px; display: block; margin-bottom: 4px;
+    }
+    .admin-form input[type="text"],
+    .admin-form input[type="number"],
+    .admin-form textarea,
+    .admin-form select {
+      width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 5px;
+      border: none; box-sizing: border-box; font-family: inherit;
+      background: #fff; color: #000;
+    }
+    .admin-form button.primary {
+      background: #6A0DAD; color: white; padding: 12px; width: 100%;
+      border: none; border-radius: 5px; cursor: pointer; font-weight: bold;
+      margin-top: 5px;
+    }
+    .admin-form button.danger {
+      background: #e74c3c; color: white; padding: 10px; width: 100%;
+      border: none; border-radius: 5px; cursor: pointer; font-weight: bold;
+      margin-top: 8px;
+    }
+
+    /* عناصر القسم (للشبكة والمنتجات) */
+    .item-editor {
+      background: #0d1a2f; border: 1px solid #2a3b5c; border-radius: 8px;
+      padding: 10px; margin-bottom: 8px;
+    }
+    .item-editor .item-row {
+      display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap;
+    }
+    .item-editor .item-row input,
+    .item-editor .item-row select {
+      flex: 1; min-width: 80px; margin-bottom: 0;
+    }
+    .item-editor button.remove-item {
+      background: #e74c3c; color: white; border: none; padding: 6px 10px;
+      border-radius: 5px; cursor: pointer; font-size: 11px; width: 100%;
+    }
+    .add-item-btn {
+      background: #3498db; color: white; border: none; padding: 8px;
+      border-radius: 5px; cursor: pointer; font-size: 12px; width: 100%;
+      margin-bottom: 10px;
+    }
+    .img-preview-box {
+      width: 60px; height: 60px; border-radius: 6px;
+      background: #0d1526; background-size: cover; background-position: center;
+      display: flex; justify-content: center; align-items: center;
+      color: #666; font-size: 10px; margin-bottom: 8px;
+      border: 1px dashed #2a3b5c;
+    }
+    .img-upload-label {
+      background: #2a3b5c; color: white; padding: 8px 15px;
+      border-radius: 5px; cursor: pointer; font-size: 12px;
+      display: inline-block; margin-bottom: 8px;
+    }
+    input[type="file"].hidden-file { display: none; }
   </style>
 </head>
 <body>
 
-  <!-- الصفحة الأولى: الشاحنة -->
+  <!-- شاشة الشاحنة -->
   <div id="page-truck" class="page active">
     <button class="truck-button">
       <span class="default">Complete Order</span>
@@ -253,18 +265,22 @@
 
   <!-- الصفحة الرئيسية -->
   <div id="page-home" class="page">
-    
+
     <!-- الهيدر -->
     <div class="profile-header">
       <div class="logo-area">
-        <div id="store-logo" class="logo-icon" style="background-size: cover; background-position: center;">D</div>
+        <div id="store-logo" class="logo-icon">D</div>
         <div class="logo-text">
           <h1 id="store-name">DAYO</h1>
           <p>STORE</p>
         </div>
       </div>
       <div class="menu-btn">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
       </div>
     </div>
 
@@ -272,52 +288,27 @@
     <div class="stats-row">
       <div class="stat-box">
         <span>👥 المستخدمين</span>
-        <strong id="store-users">12,846</strong>
+        <strong id="store-users">0</strong>
       </div>
       <div class="stat-box">
         <span>🟢 المتصلين</span>
-        <strong id="store-online" style="color: #4AE2A0;">1,245</strong>
+        <strong id="store-online" style="color: #4AE2A0;">0</strong>
       </div>
     </div>
 
-    <!-- السلايدر (البانر) -->
+    <!-- السلايدر -->
     <div class="slider-container" id="home-slider">
-      <!-- زر تعديل الغلاف (يظهر للمالك) -->
       <button id="edit-cover-btn" onclick="editCover()" class="edit-btn" style="top: 10px; left: 10px;">✏️ تعديل الخلفية</button>
       <input type="file" id="cover-upload" accept="image/*" style="display: none;" onchange="handleCoverUpload(this)">
-      
+
       <div class="slider-track" id="slider-track"></div>
       <div class="slider-dots" id="slider-dots"></div>
     </div>
 
-    <!-- الأقسام (4 أزرار) -->
-    <div class="grid-menu">
-      <div class="grid-item" onclick="handleMenuClick('telegram')">
-        <div class="grid-icon" style="color: #4A90E2;">✈️</div>
-        <div class="grid-title">خدمات<br>تيليجرام</div>
-      </div>
-      <div class="grid-item" onclick="handleMenuClick('nft')">
-        <div class="grid-icon" style="color: #8A2BE2;">💎</div>
-        <div class="grid-title">المقتنيات<br>الرقمية</div>
-      </div>
-      <div class="grid-item" onclick="handleMenuClick('social')">
-        <div class="grid-icon" style="color: #E24A90;">📱</div>
-        <div class="grid-title">مواقع<br>التواصل</div>
-      </div>
-      <div class="grid-item" onclick="handleMenuClick('games')">
-        <div class="grid-icon" style="color: #4AE2A0;">🎮</div>
-        <div class="grid-title">خدمات<br>الألعاب</div>
-      </div>
-    </div>
+    <!-- ✅ الأقسام الديناميكية: تُبنى من قاعدة البيانات -->
+    <div id="dynamic-sections-container"></div>
 
-    <!-- بانر سفلي (اختياري، يظهر فقط إذا كان هناك منتجات) -->
-    <div id="bottom-banner" style="display: none; background: linear-gradient(135deg, #131b2f 0%, #0a101f 100%); border: 1px solid #2a3b5c; border-radius: 16px; padding: 20px; margin-bottom: 20px;">
-      <span style="background: #8A2BE2; color: white; padding: 4px 12px; border-radius: 20px; font-size: 10px;">👑 الأكثر طلباً</span>
-      <h3 style="color: white; margin: 10px 0 5px;">مقتنيات تيليجرام الرقمية</h3>
-      <p style="color: #A0C4FF; font-size: 12px; margin-bottom: 10px;">تجربة فريدة في عالم تيليجرام</p>
-    </div>
-
-    <!-- اللوجو القديم (مخفي، نستخدمه لتعديل اللوجو فقط) -->
+    <!-- اللوجو المخفي (لزر تعديل اللوجو) -->
     <div id="hidden-logo-area" style="display: none;">
       <button id="edit-logo-btn" onclick="editLogo()">✏️</button>
       <input type="file" id="logo-upload" accept="image/*" onchange="handleLogoUpload(this)">
@@ -345,7 +336,17 @@
     <div class="btn-conteiner">
       <button class="btn-content" onclick="returnToNav()">
         <span>العودة للرئيسية</span>
-        <span class="icon-arrow"><svg width="66px" height="43px" viewBox="0 0 66 43" version="1.1" xmlns="http://www.w3.org/2000/svg"><g id="arrow" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd"><path id="arrow-icon-one" d="M40.1543933,3.89485454 L40.1543933,33.6901158 C40.1543933,35.9163658 38.3583933,37.7123658 36.1323933,37.7123658 C33.9063933,37.7123658 32.1103933,35.9163658 32.1103933,33.6901158 L32.1103933,3.89485454 C32.1103933,1.66872426 33.9063933,-0.127275736 36.1323933,-0.127275736 C38.3583933,-0.127275736 40.1543933,1.66872426 40.1543933,3.89485454 Z" fill="#9ee5fa"></path><path id="arrow-icon-two" d="M12.5,15.5 L35,15.5 C37.226,15.5 39.022,17.296 39.022,19.522 C39.022,21.748 37.226,23.544 35,23.544 L12.5,23.544 C10.274,23.544 8.478,21.748 8.478,19.522 C8.478,17.296 10.274,15.5 12.5,15.5 Z" fill="#9ee5fa"></path><path id="arrow-icon-three" d="M28.5,33.5 L40.5,33.5 C42.726,33.5 44.522,35.296 44.522,37.522 C44.522,39.748 42.726,41.544 40.5,41.544 L28.5,41.544 C26.274,41.544 24.478,39.748 24.478,37.522 C24.478,35.296 26.274,33.5 28.5,33.5 Z" fill="#9ee5fa"></path><path id="arrow-icon-four" d="M39.5,3.5 L14.5,28.5" stroke="#9ee5fa" stroke-width="4" stroke-linecap="round"></path><path id="arrow-icon-five" d="M14.5,28.5 L39.5,3.5" stroke="#9ee5fa" stroke-width="4" stroke-linecap="round"></path></g></svg></span>
+        <span class="icon-arrow">
+          <svg width="66px" height="43px" viewBox="0 0 66 43" xmlns="http://www.w3.org/2000/svg">
+            <g stroke="none" fill="none">
+              <path d="M40.1543933,3.89485454 L40.1543933,33.6901158 C40.1543933,35.9163658 38.3583933,37.7123658 36.1323933,37.7123658 C33.9063933,37.7123658 32.1103933,35.9163658 32.1103933,33.6901158 L32.1103933,3.89485454 C32.1103933,1.66872426 33.9063933,-0.127275736 36.1323933,-0.127275736 C38.3583933,-0.127275736 40.1543933,1.66872426 40.1543933,3.89485454 Z" fill="#9ee5fa"></path>
+              <path d="M12.5,15.5 L35,15.5 C37.226,15.5 39.022,17.296 39.022,19.522 C39.022,21.748 37.226,23.544 35,23.544 L12.5,23.544 C10.274,23.544 8.478,21.748 8.478,19.522 C8.478,17.296 10.274,15.5 12.5,15.5 Z" fill="#9ee5fa"></path>
+              <path d="M28.5,33.5 L40.5,33.5 C42.726,33.5 44.522,35.296 44.522,37.522 C44.522,39.748 42.726,41.544 40.5,41.544 L28.5,41.544 C26.274,41.544 24.478,39.748 24.478,37.522 C24.478,35.296 26.274,33.5 28.5,33.5 Z" fill="#9ee5fa"></path>
+              <path d="M39.5,3.5 L14.5,28.5" stroke="#9ee5fa" stroke-width="4" stroke-linecap="round"></path>
+              <path d="M14.5,28.5 L39.5,3.5" stroke="#9ee5fa" stroke-width="4" stroke-linecap="round"></path>
+            </g>
+          </svg>
+        </span>
       </button>
     </div>
   </div>
