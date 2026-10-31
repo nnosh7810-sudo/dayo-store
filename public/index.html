@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="style.css">
 
   <style>
+    /* ===== الصفحة الرئيسية ===== */
     #page-home {
       background: radial-gradient(circle at top right, #1a1a3a 0%, #050814 50%);
       padding: 15px; padding-bottom: 100px;
@@ -35,7 +36,6 @@
       width: 40px; height: 40px; display: flex; justify-content: center;
       align-items: center; color: white;
     }
-
     .stats-row { display: flex; gap: 10px; margin-bottom: 20px; z-index: 2; position: relative; }
     .stat-box {
       flex: 1; background: rgba(17, 26, 46, 0.6); border: 1px solid #1c2a45;
@@ -137,59 +137,126 @@
       cursor: pointer; z-index: 10;
     }
 
-    /* ✅ صفحة المتجر */
+    /* ===== صفحة المتجر الاحترافية ===== */
     #page-shop {
       background: radial-gradient(circle at top right, #1a1a3a 0%, #050814 50%);
       padding: 15px; padding-bottom: 100px;
     }
-    .shop-header {
+    .shop-topbar {
       display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 15px;
     }
-    .shop-header h1 {
-      color: white; margin: 0; font-size: 22px; font-weight: 800;
-    }
+    .shop-topbar h1 { color: white; margin: 0; font-size: 20px; font-weight: 800; }
     .shop-back-btn {
       background: #111a2e; border: 1px solid #2a3b5c; border-radius: 10px;
       width: 40px; height: 40px; display: flex; justify-content: center;
       align-items: center; color: white; cursor: pointer;
     }
+    .shop-search-wrap { margin-bottom: 15px; }
+    .shop-search {
+      display: flex; align-items: center; gap: 8px;
+      background: #111a2e; border: 1px solid #2a3b5c;
+      border-radius: 14px; padding: 10px 14px;
+      color: #a0c4ff;
+    }
+    .shop-search input {
+      flex: 1; background: none; border: none; outline: none;
+      color: white; font-size: 14px; font-family: inherit;
+    }
+    .shop-search input::placeholder { color: #6a7a9c; }
+    .shop-search-clear {
+      background: #2a3b5c; color: white; border: none;
+      border-radius: 50%; width: 22px; height: 22px;
+      cursor: pointer; font-size: 11px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .shop-categories {
+      display: flex; gap: 8px; overflow-x: auto;
+      padding-bottom: 10px; margin-bottom: 12px;
+      scrollbar-width: none;
+    }
+    .shop-categories::-webkit-scrollbar { display: none; }
+    .cat-chip {
+      flex-shrink: 0;
+      background: #111a2e; border: 1px solid #2a3b5c;
+      color: #a0c4ff; padding: 8px 16px; border-radius: 20px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: all 0.2s; white-space: nowrap;
+      display: flex; align-items: center; gap: 5px;
+    }
+    .cat-chip.active {
+      background: linear-gradient(90deg, #4A90E2, #8A2BE2);
+      color: white; border-color: transparent;
+      box-shadow: 0 4px 15px rgba(138, 43, 226, 0.4);
+    }
+    .shop-sort-row {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 15px;
+    }
+    .shop-results-count { color: #a0c4ff; font-size: 12px; }
+    .shop-sort-select {
+      background: #111a2e; border: 1px solid #2a3b5c;
+      color: white; padding: 6px 12px; border-radius: 10px;
+      font-size: 12px; font-family: inherit; cursor: pointer;
+    }
+
     .shop-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
     }
     .shop-card {
       background: linear-gradient(180deg, #111a2e 0%, #0a101f 100%);
-      border: 1px solid #1c2a45; border-radius: 14px; overflow: hidden;
-      cursor: pointer; transition: transform 0.2s;
+      border: 1px solid #1c2a45; border-radius: 16px;
+      overflow: hidden; cursor: pointer; transition: transform 0.2s;
+      position: relative;
     }
     .shop-card:active { transform: scale(0.97); }
+    .shop-card .card-img-wrap {
+      position: relative; width: 100%; height: 140px;
+      overflow: hidden; background: #152a47;
+    }
     .shop-card .card-img {
-      width: 100%; height: 130px; object-fit: cover; display: block;
-      background: #152a47;
+      width: 100%; height: 100%; object-fit: cover; display: block;
     }
     .shop-card .card-img-placeholder {
-      width: 100%; height: 130px;
+      width: 100%; height: 100%;
       display: flex; justify-content: center; align-items: center;
-      color: #4A90E2; font-size: 32px;
+      color: #4A90E2; font-size: 40px;
       background: linear-gradient(135deg, #152a47, #0a101f);
     }
+    .card-badge {
+      position: absolute; top: 8px; right: 8px;
+      padding: 3px 8px; border-radius: 10px;
+      font-size: 9px; font-weight: bold; color: white;
+      z-index: 2;
+    }
+    .card-badge.new { background: #4AE2A0; color: #0a101f; }
+    .card-badge.featured { background: #f39c12; }
+    .card-badge.discount { background: #e74c3c; }
     .shop-card .card-body { padding: 10px; }
     .shop-card .card-body strong {
-      color: white; font-size: 13px; display: block; margin-bottom: 3px;
+      color: white; font-size: 13px; display: block; margin-bottom: 4px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .shop-card .card-body small {
       color: #A0C4FF; font-size: 10px; display: block;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      margin-bottom: 6px;
     }
-    .shop-card .card-price {
-      color: #4AE2A0; font-size: 13px; font-weight: bold; margin-top: 6px;
+    .shop-card .card-price-row {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    }
+    .shop-card .card-price { color: #4AE2A0; font-size: 13px; font-weight: bold; }
+    .shop-card .card-old-price { color: #666; font-size: 10px; text-decoration: line-through; }
+    .shop-card .card-cat {
+      font-size: 9px; color: #8A2BE2;
+      background: rgba(138, 43, 226, 0.15);
+      padding: 2px 6px; border-radius: 8px;
     }
     .shop-empty {
       text-align: center; color: #a0c4ff; font-size: 13px; padding: 40px 20px;
     }
 
-    /* ✅ صفحة المنتج المفرد */
+    /* ===== صفحة المنتج المفرد ===== */
     #page-product {
       background: radial-gradient(circle at top right, #1a1a3a 0%, #050814 50%);
       padding: 15px; padding-bottom: 100px;
@@ -198,9 +265,7 @@
       display: flex; justify-content: space-between; align-items: center;
       margin-bottom: 20px;
     }
-    .product-header h1 {
-      color: white; margin: 0; font-size: 18px; font-weight: 700;
-    }
+    .product-header h1 { color: white; margin: 0; font-size: 18px; font-weight: 700; }
     .product-hero {
       width: 100%; border-radius: 20px; overflow: hidden;
       background: #152a47; margin-bottom: 15px;
@@ -220,15 +285,9 @@
       border: 1px solid #1c2a45; border-radius: 16px;
       padding: 15px; margin-bottom: 15px;
     }
-    .product-info h2 {
-      color: white; margin: 0 0 8px; font-size: 20px; font-weight: 800;
-    }
-    .product-info p {
-      color: #A0C4FF; font-size: 13px; line-height: 1.7; margin: 0 0 12px;
-    }
-    .product-prices {
-      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
-    }
+    .product-info h2 { color: white; margin: 0 0 8px; font-size: 20px; font-weight: 800; }
+    .product-info p { color: #A0C4FF; font-size: 13px; line-height: 1.7; margin: 0 0 12px; }
+    .product-prices { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
     .price-chip {
       background: #152a47; border: 1px solid #2a3b5c; border-radius: 20px;
       padding: 6px 14px; font-size: 12px; color: white;
@@ -316,16 +375,13 @@
     }
     input[type="file"].hidden-file { display: none; }
 
-    /* ✅ شارة رابط المنتج */
     .product-link-box {
       background: #0d1a2f; border: 1px dashed #4A90E2; border-radius: 8px;
       padding: 10px; margin-top: 8px; font-size: 12px; color: #a0c4ff;
       display: flex; justify-content: space-between; align-items: center; gap: 8px;
       word-break: break-all;
     }
-    .product-link-box code {
-      color: #4AE2A0; font-size: 12px; flex: 1;
-    }
+    .product-link-box code { color: #4AE2A0; font-size: 12px; flex: 1; }
     .product-link-box button {
       background: #4A90E2; color: white; border: none; padding: 5px 10px;
       border-radius: 5px; cursor: pointer; font-size: 11px; white-space: nowrap;
@@ -378,15 +434,39 @@
     </div>
   </div>
 
-  <!-- ✅ صفحة المتجر -->
+  <!-- ✅ صفحة المتجر الاحترافية -->
   <div id="page-shop" class="page">
-    <div class="shop-header">
+    <div class="shop-topbar">
       <button class="shop-back-btn" onclick="goHome()">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <h1>🛍️ المتجر</h1>
       <div style="width:40px;"></div>
     </div>
+
+    <div class="shop-search-wrap">
+      <div class="shop-search">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="shop-search-input" placeholder="ابحث عن منتج..." oninput="onShopSearch(this.value)">
+        <button class="shop-search-clear" id="shop-search-clear" onclick="clearShopSearch()" style="display:none;">✕</button>
+      </div>
+    </div>
+
+    <div class="shop-categories" id="shop-categories"></div>
+
+    <div class="shop-sort-row">
+      <span class="shop-results-count" id="shop-results-count">0 منتج</span>
+      <select id="shop-sort" class="shop-sort-select" onchange="onShopSort(this.value)">
+        <option value="newest">الأحدث</option>
+        <option value="cheapest">الأرخص</option>
+        <option value="expensive">الأغلى</option>
+        <option value="popular">الأكثر مبيعاً</option>
+      </select>
+    </div>
+
     <div id="shop-content">
       <div class="shop-empty">جاري التحميل...</div>
     </div>
