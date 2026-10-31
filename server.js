@@ -60,6 +60,21 @@ async function connectDB() {
       await sectionsCollection.insertOne({ _id: 'main', list: [] });
     }
 
+    // ✅ مجموعة التصنيفات
+    const categoriesCollection = db.collection('categories');
+    const categoriesDoc = await categoriesCollection.findOne({ _id: 'main' });
+    if (!categoriesDoc) {
+      await categoriesCollection.insertOne({
+        _id: 'main',
+        list: [
+          { id: 'all', name: 'الكل', icon: '🛍️' },
+          { id: 'electronics', name: 'إلكترونيات', icon: '📱' },
+          { id: 'games', name: 'ألعاب', icon: '🎮' },
+          { id: 'offers', name: 'عروض', icon: '🔥' }
+        ]
+      });
+    }
+
   } catch (err) {
     console.error('❌ فشل الاتصال بقاعدة البيانات:', err.message);
   }
@@ -121,7 +136,7 @@ app.post('/api/products', async (req, res) => {
   } catch (err) { res.status(401).json({ ok: false }); }
 });
 
-// ✅ جلب منتج مفرد بالمعرف (لصفحة المنتج)
+// جلب منتج مفرد
 app.post('/api/products/get', async (req, res) => {
   try {
     await getUserFromReq(req);
@@ -133,24 +148,28 @@ app.post('/api/products/get', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// ✅ إضافة منتج مع slug/link فريد
+// ✅ إضافة منتج مع تصنيف + شارة + خصم
 app.post('/api/products/add', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role === 'user') throw new Error('ليس لديك صلاحية');
 
-    const { name, description, image, prices } = req.body;
+    const { name, description, image, prices, category, badge, discount } = req.body;
     const id = Date.now().toString();
     const slug = 'product-' + id;
 
     const newProduct = {
       id,
-      slug,                        // ✅ معرف فريد للاستخدام في الرابط
-      link: '#' + slug,            // ✅ الرابط الداخلي الجاهز
+      slug,
+      link: '#' + slug,
       name,
       description: description || 'لا يوجد وصف',
       image: image || '',
       prices: prices || { usd: 0, ton: 0, stars: 0, sar: 0 },
+      category: category || 'all',
+      badge: badge || '',
+      discount: parseFloat(discount) || 0,
+      soldCount: 0,
       creatorId: user.id,
       creatorName: user.name,
       createdAt: new Date().toISOString()
@@ -161,10 +180,11 @@ app.post('/api/products/add', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
+// ✅ تعديل منتج مع الحقول الجديدة
 app.post('/api/products/edit', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
-    const { productId, name, description, image, prices } = req.body;
+    const { productId, name, description, image, prices, category, badge, discount } = req.body;
 
     const product = await db.collection('products').findOne({ id: productId });
     if (!product) throw new Error('المنتج غير موجود');
@@ -175,6 +195,9 @@ app.post('/api/products/edit', async (req, res) => {
       if (description) updateData.description = description;
       if (image !== undefined) updateData.image = image;
       if (prices) updateData.prices = prices;
+      if (category !== undefined) updateData.category = category;
+      if (badge !== undefined) updateData.badge = badge;
+      if (discount !== undefined) updateData.discount = parseFloat(discount) || 0;
 
       await db.collection('products').updateOne({ id: productId }, { $set: updateData });
       res.json({ ok: true });
@@ -198,6 +221,17 @@ app.post('/api/products/delete', async (req, res) => {
     } else {
       throw new Error('ليس لديك صلاحية لحذف هذا المنتج');
     }
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
+// ✅ زيادة عداد المبيعات (عند الشراء)
+app.post('/api/products/increment-sold', async (req, res) => {
+  try {
+    await getUserFromReq(req);
+    const { productId } = req.body;
+    if (!productId) throw new Error('معرف المنتج مطلوب');
+    await db.collection('products').updateOne({ id: productId }, { $inc: { soldCount: 1 } });
+    res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
@@ -344,7 +378,7 @@ app.post('/api/slider/delete', async (req, res) => {
 });
 
 // =========================================================
-// ✅✅✅  مسارات الأقسام الديناميكية  ✅✅✅
+// مسارات الأقسام الديناميكية
 // =========================================================
 
 app.post('/api/sections', async (req, res) => {
@@ -490,6 +524,34 @@ app.post('/api/sections/reorder', async (req, res) => {
       .map((s, i) => ({ ...s, order: i }));
 
     await saveSectionsList(list);
+    res.json({ ok: true });
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
+// =========================================================
+// ✅ مسارات التصنيفات (جديدة)
+// =========================================================
+
+app.post('/api/categories', async (req, res) => {
+  try {
+    await getUserFromReq(req);
+    const doc = await db.collection('categories').findOne({ _id: 'main' });
+    res.json({ ok: true, categories: doc?.list || [] });
+  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/categories/save', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
+    const { categories } = req.body;
+    if (!Array.isArray(categories)) throw new Error('بيانات غير صحيحة');
+
+    await db.collection('categories').updateOne(
+      { _id: 'main' },
+      { $set: { list: categories } },
+      { upsert: true }
+    );
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
