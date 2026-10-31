@@ -11,16 +11,35 @@
   <link rel="stylesheet" href="style.css">
 
   <style>
-    /* ===== الصفحة الرئيسية ===== */
+    /* ===== الرئيسية ===== */
     #page-home {
       background: radial-gradient(circle at top right, #1a1a3a 0%, #050814 50%);
       padding: 15px; padding-bottom: 100px;
     }
-    .profile-header {
+
+    /* ترحيب + هيدر */
+    .welcome-row {
       display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 20px; position: relative; z-index: 2;
+      margin-bottom: 15px; position: relative; z-index: 2;
     }
-    .logo-area { display: flex; align-items: center; gap: 10px; }
+    .welcome-text h2 { margin: 0; color: white; font-size: 18px; font-weight: 700; }
+    .welcome-text p { margin: 2px 0 0; color: #A0C4FF; font-size: 12px; }
+    .header-actions { display: flex; gap: 8px; }
+    .icon-btn {
+      background: #111a2e; border: 1px solid #2a3b5c; border-radius: 12px;
+      width: 40px; height: 40px; display: flex; justify-content: center;
+      align-items: center; color: white; cursor: pointer; position: relative;
+    }
+    .icon-btn .dot {
+      position: absolute; top: 6px; right: 8px;
+      width: 8px; height: 8px; background: #e74c3c; border-radius: 50%;
+    }
+
+    /* شعار المتجر */
+    .store-badge {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 15px; position: relative; z-index: 2;
+    }
     .logo-icon {
       width: 45px; height: 45px;
       background: linear-gradient(135deg, #4A90E2, #8A2BE2);
@@ -29,40 +48,140 @@
       box-shadow: 0 0 15px rgba(138, 43, 226, 0.6);
       background-size: cover; background-position: center;
     }
-    .logo-text h1 { margin: 0; color: white; font-size: 20px; letter-spacing: 1px; }
+    .logo-text h1 { margin: 0; color: white; font-size: 18px; letter-spacing: 1px; }
     .logo-text p { margin: 0; color: #6A0DAD; font-size: 10px; letter-spacing: 3px; }
-    .menu-btn {
-      background: #111a2e; border: 1px solid #2a3b5c; border-radius: 10px;
-      width: 40px; height: 40px; display: flex; justify-content: center;
-      align-items: center; color: white;
-    }
-    .stats-row { display: flex; gap: 10px; margin-bottom: 20px; z-index: 2; position: relative; }
-    .stat-box {
-      flex: 1; background: rgba(17, 26, 46, 0.6); border: 1px solid #1c2a45;
-      border-radius: 12px; padding: 8px 12px; display: flex;
-      justify-content: space-between; align-items: center;
-      color: #A0C4FF; font-size: 12px; backdrop-filter: blur(10px);
-    }
-    .stat-box strong { color: white; font-size: 14px; }
 
-    .grid-menu {
+    /* البانر الكبير */
+    .hero-slider {
+      width: 100%; overflow: hidden; border-radius: 20px; margin-bottom: 20px;
+      position: relative; background: #111a2e; border: 1px solid #2a3b5c;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 2;
+    }
+    .hero-slider-track { display: flex; transition: transform 0.4s ease-in-out; height: 200px; }
+    .hero-slide {
+      min-width: 100%; position: relative; display: flex; flex-direction: column;
+      justify-content: center; padding: 20px; box-sizing: border-box;
+      background-size: cover; background-position: center;
+    }
+    .hero-slide::before {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(to right, rgba(5,8,20,0.9) 0%, rgba(5,8,20,0.2) 100%);
+      z-index: 1;
+    }
+    .hero-slide-content { position: relative; z-index: 2; }
+    .slide-badge {
+      background: linear-gradient(90deg, #4A90E2, #8A2BE2); color: white;
+      padding: 4px 12px; border-radius: 20px; font-size: 10px; font-weight: bold;
+      display: inline-block; margin-bottom: 10px;
+    }
+    .slide-title { color: white; font-size: 22px; font-weight: 800; margin: 0 0 10px 0; line-height: 1.3; }
+    .slide-btn {
+      background: linear-gradient(90deg, #4A90E2, #8A2BE2); color: white; border: none;
+      padding: 8px 20px; border-radius: 20px; font-weight: bold; font-size: 12px;
+      cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+      gap: 5px; box-shadow: 0 4px 15px rgba(138, 43, 226, 0.4);
+    }
+    .hero-slider-dots {
+      position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; z-index: 3;
+    }
+    .hero-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.3);
+      cursor: pointer; transition: 0.3s;
+    }
+    .hero-dot.active { background: #4A90E2; width: 24px; border-radius: 4px; }
+
+    /* زر CTA */
+    .hero-cta {
+      display: block; width: 100%; padding: 14px;
+      border-radius: 14px; border: none; cursor: pointer;
+      font-weight: 800; font-size: 15px; color: white;
+      background: linear-gradient(90deg, #4A90E2, #8A2BE2);
+      box-shadow: 0 6px 20px rgba(138, 43, 226, 0.4);
+      margin-bottom: 20px; z-index: 2; position: relative;
+    }
+    .hero-cta:active { transform: scale(0.98); }
+
+    /* الأيقونات المربعة */
+    .quick-icons {
       display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
       margin-bottom: 20px; z-index: 2; position: relative;
     }
-    .grid-item {
+    .quick-icon {
       background: linear-gradient(180deg, #111a2e 0%, #0a101f 100%);
-      border: 1px solid #1c2a45; border-radius: 16px; padding: 15px 5px;
+      border: 1px solid #1c2a45; border-radius: 16px; padding: 12px 5px;
       text-align: center; cursor: pointer; transition: transform 0.2s;
     }
-    .grid-item:active { transform: scale(0.95); }
-    .grid-icon {
-      width: 40px; height: 40px; margin: 0 auto 8px; border-radius: 10px;
+    .quick-icon:active { transform: scale(0.95); }
+    .quick-icon-img {
+      width: 44px; height: 44px; margin: 0 auto 8px; border-radius: 12px;
       display: flex; justify-content: center; align-items: center;
-      font-size: 20px; background: rgba(255,255,255,0.05); overflow: hidden;
+      font-size: 22px; background: rgba(255,255,255,0.05); overflow: hidden;
     }
-    .grid-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: 10px; }
-    .grid-title { color: white; font-size: 11px; font-weight: 500; line-height: 1.3; }
+    .quick-icon-img img { width: 100%; height: 100%; object-fit: cover; border-radius: 12px; }
+    .quick-icon-title { color: white; font-size: 11px; font-weight: 500; line-height: 1.3; }
 
+    /* الإحصائيات */
+    .stats-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+      margin-bottom: 20px; z-index: 2; position: relative;
+    }
+    .stat-card {
+      background: rgba(17, 26, 46, 0.6); border: 1px solid #1c2a45;
+      border-radius: 12px; padding: 10px 8px; text-align: center;
+      backdrop-filter: blur(10px);
+    }
+    .stat-card .stat-icon { font-size: 18px; }
+    .stat-card .stat-value { color: white; font-size: 16px; font-weight: 800; display: block; margin-top: 4px; }
+    .stat-card .stat-label { color: #A0C4FF; font-size: 10px; display: block; margin-top: 2px; }
+
+    /* سلايدر أفقي للمنتجات */
+    .h-scroll-section { margin-bottom: 20px; z-index: 2; position: relative; }
+    .h-scroll-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 10px;
+    }
+    .h-scroll-header h3 { color: white; margin: 0; font-size: 15px; font-weight: 700; }
+    .h-scroll-header .view-all {
+      color: #4A90E2; font-size: 12px; cursor: pointer; font-weight: 600;
+      display: flex; align-items: center; gap: 3px;
+    }
+    .h-scroll {
+      display: flex; gap: 10px; overflow-x: auto;
+      padding-bottom: 5px; scrollbar-width: none;
+    }
+    .h-scroll::-webkit-scrollbar { display: none; }
+    .h-card {
+      flex-shrink: 0; width: 140px; cursor: pointer;
+      background: linear-gradient(180deg, #111a2e 0%, #0a101f 100%);
+      border: 1px solid #1c2a45; border-radius: 14px;
+      overflow: hidden; transition: transform 0.2s;
+    }
+    .h-card:active { transform: scale(0.97); }
+    .h-card-img {
+      width: 100%; height: 110px; object-fit: cover; display: block;
+      background: #152a47;
+    }
+    .h-card-img-placeholder {
+      width: 100%; height: 110px;
+      display: flex; justify-content: center; align-items: center;
+      color: #4A90E2; font-size: 30px;
+      background: linear-gradient(135deg, #152a47, #0a101f);
+    }
+    .h-card-body { padding: 8px; }
+    .h-card-body strong {
+      color: white; font-size: 12px; display: block;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .h-card-body .price { color: #4AE2A0; font-size: 12px; font-weight: bold; margin-top: 4px; }
+    .h-card-badge {
+      position: absolute; top: 6px; right: 6px;
+      padding: 2px 6px; border-radius: 8px; font-size: 8px; font-weight: bold;
+      color: white;
+    }
+    .h-card-wrap { position: relative; }
+
+    /* الأقسام الديناميكية */
     .dynamic-section {
       background: linear-gradient(180deg, #111a2e 0%, #0a101f 100%);
       border: 1px solid #1c2a45; border-radius: 16px;
@@ -92,44 +211,23 @@
     .prod-card .info small { color: #A0C4FF; font-size: 10px; display: block; margin-top: 2px; }
     .prod-card .info .price { color: #4AE2A0; font-size: 12px; font-weight: bold; margin-top: 5px; }
 
-    .slider-container {
-      width: 100%; overflow: hidden; border-radius: 20px; margin-bottom: 20px;
-      position: relative; background: #111a2e; border: 1px solid #2a3b5c;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 2;
+    /* شبكة الأقسام القديمة (داخل dynamic) */
+    .grid-menu {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
     }
-    .slider-track { display: flex; transition: transform 0.4s ease-in-out; height: 200px; }
-    .slide {
-      min-width: 100%; position: relative; display: flex; flex-direction: column;
-      justify-content: center; padding: 20px; box-sizing: border-box;
-      background-size: cover; background-position: center;
+    .grid-item {
+      background: linear-gradient(180deg, #111a2e 0%, #0a101f 100%);
+      border: 1px solid #1c2a45; border-radius: 16px; padding: 15px 5px;
+      text-align: center; cursor: pointer; transition: transform 0.2s;
     }
-    .slide::before {
-      content: ''; position: absolute; inset: 0;
-      background: linear-gradient(to right, rgba(5,8,20,0.9) 0%, rgba(5,8,20,0.2) 100%);
-      z-index: 1;
+    .grid-item:active { transform: scale(0.95); }
+    .grid-icon {
+      width: 40px; height: 40px; margin: 0 auto 8px; border-radius: 10px;
+      display: flex; justify-content: center; align-items: center;
+      font-size: 20px; background: rgba(255,255,255,0.05); overflow: hidden;
     }
-    .slide-content { position: relative; z-index: 2; }
-    .slide-badge {
-      background: linear-gradient(90deg, #4A90E2, #8A2BE2); color: white;
-      padding: 4px 12px; border-radius: 20px; font-size: 10px; font-weight: bold;
-      display: inline-block; margin-bottom: 10px;
-    }
-    .slide-title { color: white; font-size: 22px; font-weight: 800; margin: 0 0 10px 0; line-height: 1.3; }
-    .slide-btn {
-      background: linear-gradient(90deg, #4A90E2, #8A2BE2); color: white; border: none;
-      padding: 8px 20px; border-radius: 20px; font-weight: bold; font-size: 12px;
-      cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
-      gap: 5px; box-shadow: 0 4px 15px rgba(138, 43, 226, 0.4);
-    }
-    .slider-dots {
-      position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
-      display: flex; gap: 6px; z-index: 3;
-    }
-    .slider-dot {
-      width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.3);
-      cursor: pointer; transition: 0.3s;
-    }
-    .slider-dot.active { background: #4A90E2; width: 24px; border-radius: 4px; }
+    .grid-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: 10px; }
+    .grid-title { color: white; font-size: 11px; font-weight: 500; line-height: 1.3; }
 
     .edit-btn {
       display: none; position: absolute; background: rgba(0,0,0,0.7); color: white;
@@ -137,7 +235,7 @@
       cursor: pointer; z-index: 10;
     }
 
-    /* ===== صفحة المتجر الاحترافية ===== */
+    /* ===== صفحة المتجر ===== */
     #page-shop {
       background: radial-gradient(circle at top right, #1a1a3a 0%, #050814 50%);
       padding: 15px; padding-bottom: 100px;
@@ -199,7 +297,6 @@
       color: white; padding: 6px 12px; border-radius: 10px;
       font-size: 12px; font-family: inherit; cursor: pointer;
     }
-
     .shop-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
     }
@@ -256,7 +353,7 @@
       text-align: center; color: #a0c4ff; font-size: 13px; padding: 40px 20px;
     }
 
-    /* ===== صفحة المنتج المفرد ===== */
+    /* ===== صفحة المنتج ===== */
     #page-product {
       background: radial-gradient(circle at top right, #1a1a3a 0%, #050814 50%);
       padding: 15px; padding-bottom: 100px;
@@ -374,18 +471,6 @@
       display: inline-block; margin-bottom: 8px;
     }
     input[type="file"].hidden-file { display: none; }
-
-    .product-link-box {
-      background: #0d1a2f; border: 1px dashed #4A90E2; border-radius: 8px;
-      padding: 10px; margin-top: 8px; font-size: 12px; color: #a0c4ff;
-      display: flex; justify-content: space-between; align-items: center; gap: 8px;
-      word-break: break-all;
-    }
-    .product-link-box code { color: #4AE2A0; font-size: 12px; flex: 1; }
-    .product-link-box button {
-      background: #4A90E2; color: white; border: none; padding: 5px 10px;
-      border-radius: 5px; cursor: pointer; font-size: 11px; white-space: nowrap;
-    }
   </style>
 </head>
 <body>
@@ -399,33 +484,82 @@
     </button>
   </div>
 
-  <!-- الرئيسية -->
+  <!-- ✅ الرئيسية الاحترافية -->
   <div id="page-home" class="page">
-    <div class="profile-header">
-      <div class="logo-area">
-        <div id="store-logo" class="logo-icon">D</div>
-        <div class="logo-text">
-          <h1 id="store-name">DAYO</h1>
-          <p>STORE</p>
-        </div>
+
+    <!-- ترحيب + إشعارات -->
+    <div class="welcome-row">
+      <div class="welcome-text">
+        <h2 id="welcome-name">أهلاً 👋</h2>
+        <p>وش تبي تشتري اليوم؟</p>
       </div>
-      <div class="menu-btn">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+      <div class="header-actions">
+        <button class="icon-btn" onclick="copyPageLink('#home')" title="مشاركة الصفحة">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+        </button>
       </div>
     </div>
 
-    <div class="stats-row">
-      <div class="stat-box"><span>👥 المستخدمين</span><strong id="store-users">0</strong></div>
-      <div class="stat-box"><span>🟢 المتصلين</span><strong id="store-online" style="color: #4AE2A0;">0</strong></div>
+    <!-- شعار المتجر -->
+    <div class="store-badge">
+      <div id="store-logo" class="logo-icon">D</div>
+      <div class="logo-text">
+        <h1 id="store-name">DAYO</h1>
+        <p>STORE</p>
+      </div>
     </div>
 
-    <div class="slider-container" id="home-slider">
-      <button id="edit-cover-btn" onclick="editCover()" class="edit-btn" style="top: 10px; left: 10px;">✏️ تعديل الخلفية</button>
+    <!-- البانر الكبير -->
+    <div class="hero-slider" id="hero-slider">
       <input type="file" id="cover-upload" accept="image/*" style="display: none;" onchange="handleCoverUpload(this)">
-      <div class="slider-track" id="slider-track"></div>
-      <div class="slider-dots" id="slider-dots"></div>
+      <div class="hero-slider-track" id="hero-slider-track"></div>
+      <div class="hero-slider-dots" id="hero-slider-dots"></div>
     </div>
 
+    <!-- زر CTA الرئيسي -->
+    <button id="hero-cta-btn" class="hero-cta" onclick="handleInternalLink('#shop')">🛍️ تسوق الآن</button>
+
+    <!-- الأيقونات المربعة -->
+    <div class="quick-icons" id="quick-icons-container"></div>
+
+    <!-- الإحصائيات الحقيقية -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-icon">👥</span>
+        <span class="stat-value" id="stat-users">0</span>
+        <span class="stat-label">مستخدم</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-icon">🟢</span>
+        <span class="stat-value" id="stat-online" style="color:#4AE2A0;">0</span>
+        <span class="stat-label">متصل</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-icon">🛍️</span>
+        <span class="stat-value" id="stat-products">0</span>
+        <span class="stat-label">منتج</span>
+      </div>
+    </div>
+
+    <!-- وصل حديثاً -->
+    <div class="h-scroll-section">
+      <div class="h-scroll-header">
+        <h3>🔥 وصل حديثاً</h3>
+        <span class="view-all" onclick="handleInternalLink('#shop')">عرض الكل ←</span>
+      </div>
+      <div class="h-scroll" id="new-products-scroll"></div>
+    </div>
+
+    <!-- الأكثر مبيعاً -->
+    <div class="h-scroll-section">
+      <div class="h-scroll-header">
+        <h3>⚡ الأكثر مبيعاً</h3>
+        <span class="view-all" onclick="handleInternalLink('#shop')">عرض الكل ←</span>
+      </div>
+      <div class="h-scroll" id="popular-products-scroll"></div>
+    </div>
+
+    <!-- الأقسام الديناميكية -->
     <div id="dynamic-sections-container"></div>
 
     <div id="hidden-logo-area" style="display: none;">
@@ -434,14 +568,9 @@
     </div>
   </div>
 
-  <!-- ✅ صفحة المتجر الاحترافية -->
-  <div id="page-shop" class="page">
-    <div class="shop-topbar">
-      <button class="shop-back-btn" onclick="goHome()">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        <button class="shop-back-btn" onclick="copyPageLink('#shop')" title="مشاركة">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
       </button>
-      <h1>🛍️ المتجر</h1>
-      <div style="width:40px;"></div>
     </div>
 
     <div class="shop-search-wrap">
@@ -472,14 +601,16 @@
     </div>
   </div>
 
-  <!-- ✅ صفحة المنتج المفرد -->
+  <!-- صفحة المنتج -->
   <div id="page-product" class="page">
     <div class="product-header">
       <button class="shop-back-btn" onclick="goHome()">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <h1>تفاصيل المنتج</h1>
-      <div style="width:40px;"></div>
+      <button class="shop-back-btn" onclick="copyCurrentProductLink()" title="مشاركة">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+      </button>
     </div>
     <div id="product-content">
       <div class="shop-empty">جاري التحميل...</div>
