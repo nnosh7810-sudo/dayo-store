@@ -54,7 +54,6 @@ async function connectDB() {
       await sliderCollection.insertOne({ _id: 'main', slides: [] });
     }
 
-    // ✅ مجموعة الأقسام الديناميكية
     const sectionsCollection = db.collection('sections');
     const sectionsDoc = await sectionsCollection.findOne({ _id: 'main' });
     if (!sectionsDoc) {
@@ -91,7 +90,6 @@ async function getUserFromReq(req) {
   return { id: userId, role: dbUser?.role || 'user', name: dbUser?.name || parsed.user.first_name };
 }
 
-// ✅ دالة مساعدة لقراءة/كتابة قائمة الأقسام
 async function getSectionsList() {
   const doc = await db.collection('sections').findOne({ _id: 'main' });
   return doc?.list || [];
@@ -105,7 +103,7 @@ async function saveSectionsList(list) {
 }
 
 // =========================================================
-// المسارات (API) — الموجودة سابقاً
+// المسارات (API)
 // =========================================================
 
 app.post('/api/me', async (req, res) => {
@@ -123,24 +121,43 @@ app.post('/api/products', async (req, res) => {
   } catch (err) { res.status(401).json({ ok: false }); }
 });
 
+// ✅ جلب منتج مفرد بالمعرف (لصفحة المنتج)
+app.post('/api/products/get', async (req, res) => {
+  try {
+    await getUserFromReq(req);
+    const { productId } = req.body;
+    if (!productId) throw new Error('معرف المنتج مطلوب');
+    const product = await db.collection('products').findOne({ id: productId });
+    if (!product) throw new Error('المنتج غير موجود');
+    res.json({ ok: true, product });
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
+// ✅ إضافة منتج مع slug/link فريد
 app.post('/api/products/add', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role === 'user') throw new Error('ليس لديك صلاحية');
 
     const { name, description, image, prices } = req.body;
+    const id = Date.now().toString();
+    const slug = 'product-' + id;
+
     const newProduct = {
-      id: Date.now().toString(),
+      id,
+      slug,                        // ✅ معرف فريد للاستخدام في الرابط
+      link: '#' + slug,            // ✅ الرابط الداخلي الجاهز
       name,
       description: description || 'لا يوجد وصف',
       image: image || '',
       prices: prices || { usd: 0, ton: 0, stars: 0, sar: 0 },
       creatorId: user.id,
-      creatorName: user.name
+      creatorName: user.name,
+      createdAt: new Date().toISOString()
     };
 
     await db.collection('products').insertOne(newProduct);
-    res.json({ ok: true, product: newProduct });
+    res.json({ ok: true, product: newProduct, link: newProduct.link });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
@@ -327,10 +344,9 @@ app.post('/api/slider/delete', async (req, res) => {
 });
 
 // =========================================================
-// ✅✅✅  مسارات الأقسام الديناميكية (جديدة)  ✅✅✅
+// ✅✅✅  مسارات الأقسام الديناميكية  ✅✅✅
 // =========================================================
 
-// 1) جلب كل الأقسام
 app.post('/api/sections', async (req, res) => {
   try {
     await getUserFromReq(req);
@@ -339,7 +355,6 @@ app.post('/api/sections', async (req, res) => {
   } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
 
-// 2) إضافة قسم جديد
 app.post('/api/sections/add', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -376,7 +391,6 @@ app.post('/api/sections/add', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// 3) تعديل قسم
 app.post('/api/sections/edit', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -394,7 +408,6 @@ app.post('/api/sections/edit', async (req, res) => {
     const allowedTypes = ['grid', 'text', 'image', 'products', 'banner'];
     if (type && !allowedTypes.includes(type)) throw new Error('نوع القسم غير مدعوم');
 
-    // تحديث الحقول المرسلة فقط
     if (title !== undefined) list[idx].title = title;
     if (type !== undefined) list[idx].type = type;
     if (image !== undefined) list[idx].image = image;
@@ -408,7 +421,6 @@ app.post('/api/sections/edit', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// 4) حذف قسم
 app.post('/api/sections/delete', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -424,7 +436,6 @@ app.post('/api/sections/delete', async (req, res) => {
     list = list.filter(s => s.id !== sectionId);
     if (list.length === before) throw new Error('القسم غير موجود');
 
-    // إعادة ترتيب الأقسام المتبقية
     list = list
       .sort((a, b) => (a.order || 0) - (b.order || 0))
       .map((s, i) => ({ ...s, order: i }));
@@ -434,7 +445,6 @@ app.post('/api/sections/delete', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// 5) إظهار/إخفاء قسم
 app.post('/api/sections/toggle', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -456,7 +466,6 @@ app.post('/api/sections/toggle', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// 6) إعادة ترتيب الأقسام
 app.post('/api/sections/reorder', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -464,12 +473,11 @@ app.post('/api/sections/reorder', async (req, res) => {
       throw new Error('ليس لديك صلاحية');
     }
 
-    const { orders } = req.body; // [{id, order}, ...]
+    const { orders } = req.body;
     if (!Array.isArray(orders)) throw new Error('بيانات الترتيب مطلوبة');
 
     let list = await getSectionsList();
 
-    // طبّق الترتيب الجديد حسب الـ orders
     const orderMap = {};
     orders.forEach(o => { orderMap[o.id] = Number(o.order) || 0; });
     list = list.map(s => ({
@@ -477,7 +485,6 @@ app.post('/api/sections/reorder', async (req, res) => {
       order: (orderMap[s.id] !== undefined) ? orderMap[s.id] : (s.order || 0)
     }));
 
-    // تأكد من ترتيب متسلسل 0..n-1
     list = list
       .sort((a, b) => (a.order || 0) - (b.order || 0))
       .map((s, i) => ({ ...s, order: i }));
