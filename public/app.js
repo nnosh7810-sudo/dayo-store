@@ -60,6 +60,11 @@ async function apiCall(endpoint, body = {}) {
 }
 
 async function fetchUserRole() {
+  // ✅ أضف هذا السطر لعرض initData على الشاشة
+  document.body.insertAdjacentHTML('afterbegin', `<div style="position:fixed;top:0;left:0;right:0;background:#ff0;color:#000;padding:10px;z-index:99999;font-size:12px;">initData length: ${tg?.initData?.length || 0}</div>`);
+
+  if (!tg || !tg.initData) return;
+  initDataGlobal = tg.initData;
   if (!tg || !tg.initData) return;
   initDataGlobal = tg.initData;
 
