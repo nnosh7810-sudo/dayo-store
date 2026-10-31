@@ -63,7 +63,6 @@ async function fetchUserRole() {
   if (!tg || !tg.initData) return;
   initDataGlobal = tg.initData;
 
-  // ✅ ترحيب شخصي
   const firstName = tg.initDataUnsafe?.user?.first_name || '';
   const welcomeEl = document.getElementById('welcome-name');
   if (welcomeEl && firstName) welcomeEl.textContent = `أهلاً ${firstName} 👋`;
@@ -84,8 +83,6 @@ async function fetchUserRole() {
     }
   } catch (err) { console.error(err); }
 }
-fetchUserRole();
-
 /* ====== أنيميشن الشاحنة ====== */
 document.querySelectorAll('.truck-button').forEach(button => {
   button.addEventListener('click', e => {
@@ -156,14 +153,14 @@ function handleInternalLink(link) {
 
 /* ✅ نسخ رابط أي صفحة */
 function copyPageLink(hash) {
-  const base = window.location.origin + window.location.pathname;
-  const fullUrl = base + (hash || '');
-  navigator.clipboard.writeText(fullUrl).then(() => {
-    if (tg && tg.showAlert) tg.showAlert('تم نسخ الرابط ✅\n\n' + fullUrl);
-    else alert('الرابط:\n' + fullUrl);
+  // ✅ نسخ الرابط الداخلي فقط (#home, #shop, #product-123)
+  const internalLink = hash || '#home';
+  navigator.clipboard.writeText(internalLink).then(() => {
+    if (tg && tg.showAlert) tg.showAlert('تم نسخ الرابط الداخلي ✅\n\n' + internalLink + '\n\n(يعمل داخل التطبيق فقط)');
+    else alert('الرابط:\n' + internalLink);
   }).catch(() => {
-    if (tg && tg.showAlert) tg.showAlert('الرابط:\n' + fullUrl);
-    else alert('الرابط:\n' + fullUrl);
+    if (tg && tg.showAlert) tg.showAlert('الرابط: ' + internalLink);
+    else alert('الرابط: ' + internalLink);
   });
 }
 
@@ -202,17 +199,21 @@ function initNav1() {
     const left = item.offsetLeft + item.offsetWidth / 2;
     indicator.style.left = left + 'px';
     spotlight.style.left = left + 'px';
+
     const key = currentTabs[i].key;
-    if (key === 'admin') openAdminPanel();
-    else if (key === 'shop') openShop();
-    else {
-      window.location.hash = '';
-      safeRemoveActive('page-admin');
-      safeRemoveActive('page-empty');
-      safeRemoveActive('page-shop');
-      safeRemoveActive('page-product');
-      safeAddActive('page-home');
-      safeAddActive('page-nav');
+    // ✅ كل صفحة لها مسارها الخاص
+    if (key === 'home') {
+      window.location.hash = '#home';
+    } else if (key === 'shop') {
+      window.location.hash = '#shop';
+    } else if (key === 'admin') {
+      openAdminPanel();
+    } else if (key === 'heart') {
+      openFavorites();
+    } else if (key === 'cart') {
+      openCart();
+    } else if (key === 'headset') {
+      openSupport();
     }
   }
   setTimeout(() => setNav1(0, tabs), 50);
@@ -1266,18 +1267,23 @@ async function saveMenuLinks() {
    ============================================================ */
 async function openShop() {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  safeAddActive('page-shop');
-  safeAddActive('page-nav');
+  document.getElementById('page-shop').classList.add('active');
+  document.getElementById('page-nav').classList.add('active');
+  window.location.hash = '#shop';
+
   const content = document.getElementById('shop-content');
   if (!content) return;
   content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
+
   const [productsRes, catsRes] = await Promise.all([
     apiCall('/api/products'),
     apiCall('/api/categories')
   ]);
+
   if (catsRes.ok && Array.isArray(catsRes.categories)) currentCategories = catsRes.categories;
   if (productsRes.ok && Array.isArray(productsRes.products)) currentShopProducts = productsRes.products;
   else currentShopProducts = [];
+
   shopState = { search: '', category: 'all', sort: 'newest' };
   const searchInput = document.getElementById('shop-search-input');
   if (searchInput) searchInput.value = '';
@@ -1285,8 +1291,10 @@ async function openShop() {
   if (sortSelect) sortSelect.value = 'newest';
   const clearBtn = document.getElementById('shop-search-clear');
   if (clearBtn) clearBtn.style.display = 'none';
+
   renderCategoriesBar();
   applyShopFilters();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function renderCategoriesBar() {
@@ -1398,17 +1406,23 @@ function formatPrices(prices) {
    صفحة المنتج
    ============================================================ */
 async function openProduct(productId) {
+  // ✅ أخفِ كل الصفحات + اعرض صفحة المنتج فوراً
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-product').classList.add('active');
+  document.getElementById('page-nav').classList.add('active');
+  // ✅ غيّر الـ hash
   window.location.hash = '#product-' + productId;
+  // ✅ حمّل التفاصيل
   await loadProductPage(productId);
+  // ✅ ارجع لأعلى
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 async function loadProductPage(productId) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  safeAddActive('page-product');
-  safeAddActive('page-nav');
   const content = document.getElementById('product-content');
   if (!content) return;
   content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
+
   let product = currentShopProducts.find(p => p.id === productId);
   if (!product) {
     const res = await apiCall('/api/products/get', { productId });
@@ -1418,12 +1432,14 @@ async function loadProductPage(productId) {
     content.innerHTML = '<div class="shop-empty">❌ المنتج غير موجود</div>';
     return;
   }
+
   const pricesStr = formatPrices(product.prices);
   const catName = currentCategories.find(c => c.id === product.category)?.name || '';
   let badgeHTML = '';
   if (product.discount > 0) badgeHTML = `<span class="card-badge discount" style="position:static;display:inline-block;margin-bottom:8px;">🔥 خصم ${product.discount}%</span>`;
   else if (product.badge === 'new') badgeHTML = `<span class="card-badge new" style="position:static;display:inline-block;margin-bottom:8px;">⚡ جديد</span>`;
   else if (product.badge === 'featured') badgeHTML = `<span class="card-badge featured" style="position:static;display:inline-block;margin-bottom:8px;">⭐ مميز</span>`;
+
   content.innerHTML = `
     <div class="product-hero">
       ${product.image ? `<img src="${product.image}" alt="">` : `<div class="hero-placeholder">📦</div>`}
@@ -1450,17 +1466,16 @@ function buyProduct(productId) {
   window.location.hash = '#product-' + productId;
 }
 
+/* ✅ نسخ الرابط الداخلي فقط (#product-xxx) بدون دومين */
 function copyProductLink(productId) {
   const product = currentShopProducts.find(p => p.id === productId);
   const internalLink = product?.link || ('#product-' + productId);
-  const base = window.location.origin + window.location.pathname;
-  const fullUrl = base + internalLink;
-  navigator.clipboard.writeText(fullUrl).then(() => {
-    if (tg && tg.showAlert) tg.showAlert('تم نسخ الرابط ✅\n\n' + fullUrl);
-    else alert('الرابط:\n' + fullUrl);
+  navigator.clipboard.writeText(internalLink).then(() => {
+    if (tg && tg.showAlert) tg.showAlert('تم نسخ الرابط الداخلي ✅\n\n' + internalLink + '\n\n(يعمل داخل التطبيق)');
+    else alert('الرابط:\n' + internalLink);
   }).catch(() => {
-    if (tg && tg.showAlert) tg.showAlert('الرابط:\n' + fullUrl);
-    else alert('الرابط:\n' + fullUrl);
+    if (tg && tg.showAlert) tg.showAlert('الرابط: ' + internalLink);
+    else alert('الرابط: ' + internalLink);
   });
 }
 
@@ -1469,11 +1484,36 @@ function copyProductLinkFromAdmin(productId) {
 }
 
 function goHome() {
-  window.location.hash = '';
+  window.location.hash = '#home';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  safeAddActive('page-home');
-  safeAddActive('page-nav');
+  document.getElementById('page-home').classList.add('active');
+  document.getElementById('page-nav').classList.add('active');
 }
+
+function showEmptyPage(title, icon, message) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  let emptyPage = document.getElementById('page-dynamic-empty');
+  if (!emptyPage) {
+    emptyPage = document.createElement('div');
+    emptyPage.id = 'page-dynamic-empty';
+    emptyPage.className = 'page';
+    emptyPage.style.cssText = 'background:#0A192F;min-height:100vh;padding:30px 20px;align-items:center;justify-content:center;text-align:center;color:white;flex-direction:column;';
+    document.body.insertBefore(emptyPage, document.getElementById('page-admin'));
+  }
+  emptyPage.innerHTML = `
+    <div style="font-size:60px;margin-bottom:20px;">${icon}</div>
+    <h2 style="color:white;margin:0 0 10px;">${title}</h2>
+    <p style="color:#a0c4ff;font-size:14px;margin:0 0 30px;">${message}</p>
+    <button onclick="goHome()" style="background:linear-gradient(90deg,#4A90E2,#8A2BE2);color:white;border:none;padding:12px 30px;border-radius:12px;font-weight:bold;cursor:pointer;">🏠 العودة للرئيسية</button>
+  `;
+  emptyPage.classList.add('active');
+  document.getElementById('page-nav').classList.add('active');
+  window.location.hash = '#empty';
+}
+
+function openFavorites() { showEmptyPage('المفضلة', '❤️', 'لا توجد منتجات في المفضلة بعد'); }
+function openCart() { showEmptyPage('السلة', '🛒', 'السلة فاضية'); }
+function openSupport() { showEmptyPage('الدعم الفني', '🎧', 'تواصل معنا عبر تيليجرام أو البريد'); }
 
 /* ============================================================
    hash listener
@@ -1481,22 +1521,39 @@ function goHome() {
 async function handleHashChange() {
   const hash = window.location.hash.replace('#', '');
   if (!hash) return;
+
+  if (hash === 'home') {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-home').classList.add('active');
+    document.getElementById('page-nav').classList.add('active');
+    return;
+  }
+
+  if (hash === 'shop') {
+    openShop();
+    return;
+  }
+
+  if (hash === 'empty') {
+    // الصفحة الفارغة تُدار من showEmptyPage — لا شيء هنا
+    return;
+  }
+
   if (hash.startsWith('product-')) {
     const productId = hash.replace('product-', '');
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-product').classList.add('active');
+    document.getElementById('page-nav').classList.add('active');
     if (currentShopProducts.length === 0) {
       const data = await apiCall('/api/products');
       if (data.ok && data.products) currentShopProducts = data.products;
     }
     if (currentCategories.length === 0) await loadCategories();
     await loadProductPage(productId);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
   }
 }
-
-window.addEventListener('hashchange', handleHashChange);
-setTimeout(() => {
-  if (window.location.hash) handleHashChange();
-}, 1500);
-
 /* ============================================================
    إغلاق لوحة التحكم + العودة
    ============================================================ */
