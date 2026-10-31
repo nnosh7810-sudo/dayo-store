@@ -1555,6 +1555,14 @@ async function handleHashChange() {
   }
 }
 /* ============================================================
+   ✅ مستمع الـ hash — يشغّل الصفحات من الروابط
+   ============================================================ */
+window.addEventListener('hashchange', handleHashChange);
+
+setTimeout(() => {
+  if (window.location.hash) handleHashChange();
+}, 800);
+/* ============================================================
    إغلاق لوحة التحكم + العودة
    ============================================================ */
 const closeAdminBtn = document.getElementById('close-admin');
