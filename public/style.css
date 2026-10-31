@@ -1,13 +1,13 @@
 /* ====== إعدادات عامة ====== */
 html { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
 *, *:before, *:after { box-sizing: inherit; }
-    
+
 :root {
   --tg-bg: var(--tg-theme-bg-color, #ECEFFC);
   --tg-text: var(--tg-theme-text-color, #2B3044);
   --nav-bg: #1c1c1e;
   --icon-color: #8c8c8e;
-  --active-color: #6A0DAD; /* بنفسجي غامق */
+  --active-color: #6A0DAD;
 }
 
 body {
@@ -20,20 +20,108 @@ body {
   transition: background 0.3s;
 }
 
-/* ====== إخفاء/إظهار الصفحات ====== */
+/* ====== ✅ إخفاء/إظهار الصفحات — معدّل ====== */
 .page {
-  display: none;
+  display: none !important;
   width: 100%;
   min-height: 100vh;
 }
-.page.active { display: flex; flex-direction: column; }
+.page.active {
+  display: flex !important;
+  flex-direction: column;
+}
 
-/* =========================================================
-   الصفحة الأولى: زر الشاحنة
-========================================================= */
-#page-truck {
+/* ====== ✅ الشريط السفلي فوق كل شيء ====== */
+#page-nav {
+  background-color: transparent;
+  justify-content: flex-end;
+  padding-bottom: 20px;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 9999 !important;
+}
+#page-nav.active {
+  display: flex !important;
+}
+
+.navbar-container {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 0 16px;
+  pointer-events: auto;
+  position: relative;
+  z-index: 10000;
+}
+.navbar {
+  background-color: var(--nav-bg);
+  border-radius: 32px;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 460px;
+  height: 75px;
+  padding: 0 16px;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 16px 36px #00000050;
+}
+.nav-item {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
   justify-content: center;
   align-items: center;
+  width: 70px;
+  height: 100%;
+  display: flex;
+  position: relative;
+  border: 0;
+  background: none;
+  padding: 0;
+}
+.icon { color: var(--icon-color); z-index: 2; transition: all .3s; display: flex; }
+.active-icon {
+  color: var(--active-color);
+  filter: drop-shadow(0 0 12px #6A0DADb3);
+  transform: scale(1.1);
+}
+.active-indicator {
+  background-color: var(--active-color);
+  z-index: 3;
+  border-bottom-right-radius: 6px;
+  border-bottom-left-radius: 6px;
+  width: 36px;
+  height: 5px;
+  margin-left: -18px;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  box-shadow: 0 2px 10px #6A0DADe6;
+}
+.spotlight {
+  clip-path: polygon(30% 0, 70% 0, 100% 100%, 0% 100%);
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(#6A0DAD40 0%, #6A0DAD00 100%);
+  width: 90px;
+  height: 45px;
+  margin-left: -45px;
+  position: absolute;
+  top: 0;
+  left: 50%;
+}
+.icon svg { display: block; }
+
+/* ====== ✅ الشاحنة فوق الكل ====== */
+#page-truck { z-index: 100; }
+#page-truck.active {
+  justify-content: center;
+  align-items: center;
+  background: radial-gradient(circle at center, #1a1a3a 0%, #050814 100%);
 }
 
 .truck-button {
@@ -193,113 +281,16 @@ body {
 .truck-button.animation.done { --rx: 0deg; --br: 15px; --br-d: .2s; }
 .truck-button.animation.done .success { --o: 1; --offset: 0; }
 
-/* =========================================================
-   الصفحة الثانية: شريط التنقل الداكن (Spotlight) + الخلفية الزرقاء
-========================================================= */
-#page-nav {
-  background-color: transparent; 
-  justify-content: flex-end; 
-  padding-bottom: 20px;
-  position: fixed; /* يطفو فوق التصميم */
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  pointer-events: none; /* لكي لا يمنع الضغط على الأشياء تحته */
-}
-
-.navbar-container {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  padding: 0 16px;
-  pointer-events: auto; /* إعادة تفعيل الضغط على الشريط نفسه */
-}
-.navbar {
-  background-color: var(--nav-bg);
-  border-radius: 32px;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  max-width: 460px;
-  height: 75px;
-  padding: 0 16px;
-  display: flex;
-  position: relative;
-  overflow: hidden;
-  box-shadow: 0 16px 36px #00000050;
-}
-
-.nav-item {
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  justify-content: center;
-  align-items: center;
-  width: 70px;
-  height: 100%;
-  display: flex;
-  position: relative;
-  border: 0;
-  background: none;
-  padding: 0;
-}
-
-.icon {
-  color: var(--icon-color);
-  z-index: 2;
-  transition: all .3s;
-  display: flex;
-}
-
-.active-icon {
-  color: var(--active-color);
-  filter: drop-shadow(0 0 12px #6A0DADb3);
-  transform: scale(1.1);
-}
-
-.active-indicator {
-  background-color: var(--active-color);
-  z-index: 3;
-  border-bottom-right-radius: 6px;
-  border-bottom-left-radius: 6px;
-  width: 36px;
-  height: 5px;
-  margin-left: -18px;
-  position: absolute;
-  top: 0;
-  left: 50%;
-  box-shadow: 0 2px 10px #6A0DADe6;
-}
-
-.spotlight {
-  clip-path: polygon(30% 0, 70% 0, 100% 100%, 0% 100%);
-  z-index: 1;
-  pointer-events: none;
-  background: linear-gradient(#6A0DAD40 0%, #6A0DAD00 100%);
-  width: 90px;
-  height: 45px;
-  margin-left: -45px;
-  position: absolute;
-  top: 0;
-  left: 50%;
-}
-    
-.icon svg { display: block; }
-/* ====== اللودر المخصص ====== */
+/* ====== اللودر ====== */
 .custom-loader-wrapper {
   display: flex;
   justify-content: center;
   align-items: center;
   width: 100%;
-  height: 100px; /* مساحة مناسبة للودر */
+  height: 100px;
   margin-top: 20px;
 }
-
-.loader {
-  width: 80px;
-  height: 50px;
-  position: relative;
-}
-
+.loader { width: 80px; height: 50px; position: relative; }
 .loader-text {
   position: absolute;
   top: 0;
@@ -310,7 +301,6 @@ body {
   font-size: .8rem;
   letter-spacing: 1px;
 }
-
 .load {
   background-color: #9A79FF;
   border-radius: 50px;
@@ -322,7 +312,6 @@ body {
   transform: translateX(64px);
   animation: loading_713 3.5s ease both infinite;
 }
-
 .load::before {
   position: absolute;
   content: "";
@@ -332,7 +321,6 @@ body {
   border-radius: inherit;
   animation: loading2_713 3.5s ease both infinite;
 }
-
 @keyframes text_713 {
   0% { letter-spacing: 1px; transform: translateX(0px); }
   40% { letter-spacing: 2px; transform: translateX(26px); }
@@ -340,7 +328,6 @@ body {
   90% { letter-spacing: 2px; transform: translateX(0px); }
   100% { letter-spacing: 1px; transform: translateX(0px); }
 }
-
 @keyframes loading_713 {
   0% { width: 16px; transform: translateX(0px); }
   40% { width: 100%; transform: translateX(0px); }
@@ -348,7 +335,6 @@ body {
   90% { width: 100%; transform: translateX(0px); }
   100% { width: 16px; transform: translateX(0px); }
 }
-
 @keyframes loading2_713 {
   0% { transform: translateX(0px); width: 16px; }
   40% { transform: translateX(0%); width: 80%; }
@@ -356,7 +342,8 @@ body {
   90% { width: 80%; transform: translateX(15px); }
   100% { transform: translateX(0px); width: 16px; }
 }
-/* ====== زر العودة الأنيق ====== */
+
+/* ====== زر العودة ====== */
 .btn-conteiner {
   display: flex;
   justify-content: center;
@@ -366,7 +353,6 @@ body {
   --color-outline: #9ee5fa80;
   --color-shadow: #00000080;
 }
-
 .btn-content {
   display: flex;
   align-items: center;
@@ -382,9 +368,7 @@ body {
   border: none;
   cursor: pointer;
 }
-
-.btn-content:hover,
-.btn-content:focus {
+.btn-content:hover, .btn-content:focus {
   transition: 0.5s;
   -webkit-animation: btn-content 1s;
   animation: btn-content 1s;
@@ -392,38 +376,19 @@ body {
   outline-offset: 0.2em;
   box-shadow: 0 0 0.4em 0 var(--color-background);
 }
-
-.btn-content .icon-arrow {
-  transition: 0.5s;
-  margin-right: 0px;
-  transform: scale(0.6);
-}
-
-.btn-content:hover .icon-arrow {
-  transition: 0.5s;
-  margin-right: 25px;
-}
-
-.icon-arrow {
-  width: 20px;
-  margin-left: 15px;
-  position: relative;
-  top: 6%;
-}
-
+.btn-content .icon-arrow { transition: 0.5s; margin-right: 0px; transform: scale(0.6); }
+.btn-content:hover .icon-arrow { transition: 0.5s; margin-right: 25px; }
+.icon-arrow { width: 20px; margin-left: 15px; position: relative; top: 6%; }
 #arrow-icon-one { transition: 0.4s; transform: translateX(-60%); }
 #arrow-icon-two { transition: 0.5s; transform: translateX(-30%); }
-
 .btn-content:hover #arrow-icon-three { animation: color_anim 1s infinite 0.2s; }
 .btn-content:hover #arrow-icon-one { transform: translateX(0%); animation: color_anim 1s infinite 0.6s; }
 .btn-content:hover #arrow-icon-two { transform: translateX(0%); animation: color_anim 1s infinite 0.4s; }
-
 @keyframes color_anim {
   0% { fill: white; }
   50% { fill: var(--color-background); }
   100% { fill: #9ee5fa; }
 }
-
 @-webkit-keyframes btn-content {
   0% { outline: 0.2em solid var(--color-background); outline-offset: 0; }
 }
