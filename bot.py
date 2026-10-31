@@ -9,7 +9,7 @@ from telegram.ext import (
     MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
 from google import genai
-
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 load_dotenv()
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -35,6 +35,7 @@ def clean_history(chat_id):
 # ========== /start وعملية الأسئلة ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
+        [InlineKeyboardButton("🛍️ افتح المتجر", web_app=WebAppInfo(url="https://dayo-store.onrender.com/"))],
         [InlineKeyboardButton("ذكر", callback_data="male"),
          InlineKeyboardButton("أنثى", callback_data="female")]
     ]
@@ -143,13 +144,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("تم الإلغاء. أرسل /start للبدء من جديد.")
     return ConversationHandler.END
-
+async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🛍️ افتح المتجر", web_app=WebAppInfo(url="https://dayo-store.onrender.com/"))]
+    ]
+    await update.message.reply_text(
+        "🛍️ اضغط الزر لفتح المتجر:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 def main():
     if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
         print("يرجى تعيين TELEGRAM_TOKEN و GEMINI_API_KEY")
         return
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    # ✅ أضف هذا السطر
+    app.add_handler(CommandHandler("shop", shop))
 
     # معالج المحادثة التفاعلية
     conv_handler = ConversationHandler(
@@ -164,11 +175,7 @@ def main():
     )
     app.add_handler(conv_handler)
 
-    # معالج الرسائل العادية (بعد انتهاء الإعداد)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("البوت يعمل...")
     app.run_polling()
-
-if __name__ == '__main__':
-    main()
