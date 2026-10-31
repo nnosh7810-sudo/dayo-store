@@ -1,5 +1,5 @@
 /* ============================================================
-   DAYO STORE — app.js (نسخة كاملة نهائية)
+   DAYO STORE — app.js (نسخة كاملة نهائية — متجر احترافي)
    ============================================================ */
 
 const tg = window.Telegram?.WebApp;
@@ -54,6 +54,7 @@ async function fetchUserRole() {
       loadStoreData();
       loadSlider();
       loadDynamicSections();
+      loadCategories(); // ✅
     }
   } catch (err) { console.error(err); }
 }
@@ -104,10 +105,9 @@ const icons = {
 const svg=(name,size=24,stroke=2)=>`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${icons[name]}</svg>`;
 
 /* ============================================================
-   ✅✅✅  دالة معالجة الروابط (داخل التطبيق)  ✅✅✅
+   معالجة الروابط (داخل التطبيق)
    ============================================================ */
 
-/* استخرج الـ hash من أي رابط */
 function extractHash(link) {
   if (!link) return '';
   const idx = link.indexOf('#');
@@ -115,29 +115,22 @@ function extractHash(link) {
   return '';
 }
 
-/* معالج الروابط: داخلي أولاً، خارجي ثانياً */
 function handleInternalLink(link) {
   if (!link) return;
-
-  // 1) إذا فيه hash (#product-123 أو #page-admin) → افتحه داخل التطبيق
   const hash = extractHash(link);
   if (hash) {
     window.location.hash = hash;
     return;
   }
-
-  // 2) إذا رابط خارجي حقيقي → افتحه في المتصفح
   if (link.startsWith('http')) {
     window.open(link, '_blank');
     return;
   }
-
-  // 3) إذا معرف عنصر داخلي (زي "page-admin")
   const el = document.getElementById(link);
   if (el) el.scrollIntoView({ behavior: 'smooth' });
 }
 
-/* ====== الشريط السفلي (زر المتجر بدل الجرس) ====== */
+/* ====== الشريط السفلي ====== */
 function initNav1() {
   const nav1 = document.getElementById('nav1');
   nav1.innerHTML = '';
@@ -264,7 +257,6 @@ function renderSlider(slides) {
     contentHTML += `<span class="slide-badge">👑 عروض خاصة</span>`;
     if (slide.title) contentHTML += `<h3 class="slide-title">${slide.title}</h3>`;
     if (slide.btnText && slide.btnLink) {
-      // ✅ زر السلايدر يفتح داخلياً
       contentHTML += `<a href="javascript:void(0)" onclick="handleInternalLink('${slide.btnLink.replace(/'/g, "\\'")}')" class="slide-btn">${slide.btnText} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></a>`;
     }
     contentHTML += `</div>`;
@@ -421,7 +413,6 @@ function renderDynamicSections() {
       (sec.items || []).forEach(item => {
         const itemDiv = document.createElement('div');
         itemDiv.className = 'grid-item';
-        // ✅ يفتح داخلياً
         itemDiv.onclick = () => handleInternalLink(item.link);
         const iconHTML = item.image
           ? `<img src="${item.image}" alt="">`
@@ -457,7 +448,6 @@ function renderDynamicSections() {
       (sec.items || []).forEach(item => {
         const card = document.createElement('div');
         card.className = 'prod-card';
-        // ✅ إذا للعنصر رابط، اضغط يفتحه
         if (item.link) card.onclick = () => handleInternalLink(item.link);
         const price = item.price ? `<div class="price">${item.price}</div>` : '';
         card.innerHTML = `
@@ -485,7 +475,6 @@ function renderDynamicSections() {
   });
 }
 
-/* (بقيت دالة handleSectionItemClick لكن لم تعد مستخدمة — يمكن حذفها) */
 function handleSectionItemClick(item) {
   handleInternalLink(item?.link);
 }
@@ -702,7 +691,7 @@ async function saveSection() {
     content: document.getElementById('sec-content')?.value || '',
     buttonText: document.getElementById('sec-btn-text')?.value || '',
     buttonLink: document.getElementById('sec-btn-link')?.value || '',
-        items: ['grid', 'products'].includes(type) ? sectionItemsBuffer : []
+    items: ['grid', 'products'].includes(type) ? sectionItemsBuffer : []
   };
 
   let res;
@@ -766,6 +755,90 @@ async function moveSection(id, direction) {
 }
 
 /* ============================================================
+   ✅✅✅  إدارة التصنيفات  ✅✅✅
+   ============================================================ */
+
+let currentCategories = [];
+
+async function loadCategories() {
+  const res = await apiCall('/api/categories');
+  if (res.ok && Array.isArray(res.categories)) {
+    currentCategories = res.categories;
+  }
+}
+
+function renderCategoriesAdmin() {
+  return `
+    <hr style="border-color:#333;margin:20px 0;">
+    <div class="admin-form">
+      <h3 style="margin-top:0;color:white;">🏷️ إدارة التصنيفات</h3>
+      <p style="color:#a0c4ff;font-size:12px;">أضف/احذف تصنيفات المتجر. تظهر في صفحة المتجر كأزرار فلترة.</p>
+      <div id="categories-list"></div>
+      <div style="display:flex;gap:6px;margin-top:10px;">
+        <input type="text" id="new-cat-name" placeholder="اسم التصنيف" style="flex:2;margin-bottom:0;">
+        <input type="text" id="new-cat-icon" placeholder="📦" maxlength="2" style="flex:1;margin-bottom:0;text-align:center;">
+        <button class="primary" onclick="addCategory()" style="flex:1;margin-top:0;">➕</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderCategoriesList() {
+  const list = document.getElementById('categories-list');
+  if (!list) return;
+
+  if (!currentCategories || currentCategories.length === 0) {
+    list.innerHTML = '<p style="color:#a0c4ff;font-size:12px;">لا توجد تصنيفات.</p>';
+    return;
+  }
+
+  list.innerHTML = currentCategories.map(cat => `
+    <div class="admin-section-card" style="margin-bottom:6px;">
+      <div class="info">
+        <strong>${cat.icon || '📦'} ${cat.name}</strong>
+        <small>ID: ${cat.id}</small>
+      </div>
+      <div class="actions">
+        ${cat.id !== 'all' ? `<button class="btn-delete" onclick="deleteCategory('${cat.id}')">🗑️</button>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+async function addCategory() {
+  const name = document.getElementById('new-cat-name').value.trim();
+  const icon = document.getElementById('new-cat-icon').value.trim() || '📦';
+  if (!name) return alert('أدخل اسم التصنيف');
+
+  const id = 'cat_' + Date.now();
+  const newCats = [...currentCategories, { id, name, icon }];
+
+  const res = await apiCall('/api/categories/save', { categories: newCats });
+  if (res.ok) {
+    currentCategories = newCats;
+    document.getElementById('new-cat-name').value = '';
+    document.getElementById('new-cat-icon').value = '';
+    renderCategoriesList();
+    tg.showAlert('تمت إضافة التصنيف ✅');
+  } else {
+    tg.showAlert(res.error);
+  }
+}
+
+async function deleteCategory(id) {
+  if (!confirm('حذف هذا التصنيف؟')) return;
+  const newCats = currentCategories.filter(c => c.id !== id);
+  const res = await apiCall('/api/categories/save', { categories: newCats });
+  if (res.ok) {
+    currentCategories = newCats;
+    renderCategoriesList();
+    tg.showAlert('تم الحذف ✅');
+  } else {
+    tg.showAlert(res.error);
+  }
+}
+
+/* ============================================================
    لوحة التحكم الرئيسية
    ============================================================ */
 
@@ -777,16 +850,21 @@ async function openAdminPanel() {
   const content = document.getElementById('admin-content');
   content.innerHTML = `<div class="custom-loader-wrapper"><div class="loader"><p class="loader-text">جاري التحميل...</p><span class="load"></span></div></div>`;
 
-  const [data, sliderData, staffData, sectionsData] = await Promise.all([
+  const [data, sliderData, staffData, sectionsData, catsData] = await Promise.all([
     apiCall('/api/products'),
     userRole === 'owner' ? apiCall('/api/slider') : Promise.resolve({ ok: false, slides: [] }),
     (userRole === 'owner' || userRole === 'admin') ? apiCall('/api/users/list') : Promise.resolve({ ok: false, staff: [] }),
-    apiCall('/api/sections')
+    apiCall('/api/sections'),
+    apiCall('/api/categories')
   ]);
 
   if (sectionsData.ok && Array.isArray(sectionsData.sections)) {
     dynamicSections = sectionsData.sections;
     renderDynamicSections();
+  }
+
+  if (catsData.ok && Array.isArray(catsData.categories)) {
+    currentCategories = catsData.categories;
   }
 
   // ===== المنتجات =====
@@ -800,11 +878,13 @@ async function openAdminPanel() {
       if (p.prices?.sar > 0) pricesStr.push(`🇸🇦 ${p.prices.sar} ريال`);
       const imgTag = p.image ? `<img src="${p.image}" style="width: 50px; height: 50px; border-radius: 5px; object-fit: cover; margin-left: 10px;">` : '';
       const link = p.link || ('#product-' + p.id);
+      const catName = currentCategories.find(c => c.id === p.category)?.name || '';
       return `<div style="background: #152a47; padding: 12px; margin-bottom: 12px; border-radius: 10px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">
         <div style="display: flex; align-items: center; flex: 1; min-width: 180px;">${imgTag}<div>
           <strong style="font-size: 16px; color: white;">${p.name}</strong>
           <p style="font-size: 12px; color: #a0c4ff; margin: 4px 0;">${p.description}</p>
           <div style="font-size: 13px; color: #fff; margin-bottom: 4px;">${pricesStr.join(' | ') || 'لا يوجد سعر'}</div>
+          ${catName ? `<div style="font-size: 11px; color: #8A2BE2;">🏷️ ${catName}</div>` : ''}
           <div style="font-size: 11px; color: #4AE2A0; margin-top: 4px;">🔗 ${link}</div>
         </div></div>
         <div style="display: flex; flex-direction: column; gap: 5px;">
@@ -854,6 +934,12 @@ async function openAdminPanel() {
 
   const store = storeMenuLinks || {};
 
+  // خيارات التصنيفات للنموذج
+  const catOptions = currentCategories
+    .filter(c => c.id !== 'all')
+    .map(c => `<option value="${c.id}">${c.icon || '📦'} ${c.name}</option>`)
+    .join('');
+
   content.innerHTML = `
     <!-- المنتجات -->
     <div style="background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
@@ -875,6 +961,19 @@ async function openAdminPanel() {
         <input type="number" id="price-stars" placeholder="نجوم ⭐" style="padding: 8px; border-radius: 5px; border: none;">
         <input type="number" id="price-sar" placeholder="ريال 🇸🇦" style="padding: 8px; border-radius: 5px; border: none;">
       </div>
+      <p style="color: #a0c4ff; font-size: 12px; margin: 5px 0;">التصنيف والشارة:</p>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+        <select id="new-prod-category" style="padding: 8px; border-radius: 5px; border: none;">
+          <option value="all">بدون تصنيف</option>
+          ${catOptions}
+        </select>
+        <select id="new-prod-badge" style="padding: 8px; border-radius: 5px; border: none;">
+          <option value="">بدون شارة</option>
+          <option value="new">⚡ جديد</option>
+          <option value="featured">⭐ مميز</option>
+        </select>
+      </div>
+      <input type="number" id="new-prod-discount" placeholder="نسبة الخصم % (اختياري)" style="width: 100%; padding: 8px; margin-bottom: 8px; border-radius: 5px; border: none;" min="0" max="99">
       <button onclick="addProduct()" id="submit-btn" style="background: #6A0DAD; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">إضافة المنتج</button>
       <button id="cancel-edit-btn" onclick="openAdminPanel()" style="display: none; background: #e74c3c; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-top: 8px;">إلغاء التعديل</button>
     </div>
@@ -882,6 +981,8 @@ async function openAdminPanel() {
     <div>${productsHTML}</div>
 
     ${userRole === 'owner' || userRole === 'admin' ? renderSectionsAdmin() : ''}
+
+    ${userRole === 'owner' || userRole === 'admin' ? renderCategoriesAdmin() : ''}
 
     ${userRole === 'owner' ? `
       <hr style="border-color: #333; margin: 20px 0;">
@@ -931,6 +1032,10 @@ async function openAdminPanel() {
     ` : ''}
   `;
 
+  if (userRole === 'owner' || userRole === 'admin') {
+    renderCategoriesList();
+  }
+
   currentBase64Image = "";
   currentSliderImage = "";
 }
@@ -945,10 +1050,14 @@ async function addProduct() {
     stars: parseFloat(document.getElementById('price-stars').value) || 0,
     sar: parseFloat(document.getElementById('price-sar').value) || 0
   };
+  const category = document.getElementById('new-prod-category')?.value || 'all';
+  const badge = document.getElementById('new-prod-badge')?.value || '';
+  const discount = parseFloat(document.getElementById('new-prod-discount')?.value) || 0;
+
   if (!name) return alert('أدخل اسم المنتج');
 
   const res = await apiCall('/api/products/add', {
-    name, description, image: currentBase64Image, prices
+    name, description, image: currentBase64Image, prices, category, badge, discount
   });
 
   if (res.ok) {
@@ -982,6 +1091,14 @@ async function editProductForm(id) {
   document.getElementById('price-ton').value = product.prices?.ton || '';
   document.getElementById('price-stars').value = product.prices?.stars || '';
   document.getElementById('price-sar').value = product.prices?.sar || '';
+
+  const catSel = document.getElementById('new-prod-category');
+  if (catSel) catSel.value = product.category || 'all';
+  const badgeSel = document.getElementById('new-prod-badge');
+  if (badgeSel) badgeSel.value = product.badge || '';
+  const discInp = document.getElementById('new-prod-discount');
+  if (discInp) discInp.value = product.discount || '';
+
   const submitBtn = document.getElementById('submit-btn');
   submitBtn.textContent = 'حفظ التعديلات';
   submitBtn.style.background = '#f39c12';
@@ -999,7 +1116,14 @@ async function saveEdit(id) {
     stars: parseFloat(document.getElementById('price-stars').value) || 0,
     sar: parseFloat(document.getElementById('price-sar').value) || 0
   };
-  const res = await apiCall('/api/products/edit', { productId: id, name, description, image: currentBase64Image, prices });
+  const category = document.getElementById('new-prod-category')?.value || 'all';
+  const badge = document.getElementById('new-prod-badge')?.value || '';
+  const discount = parseFloat(document.getElementById('new-prod-discount')?.value) || 0;
+
+  const res = await apiCall('/api/products/edit', {
+    productId: id, name, description, image: currentBase64Image, prices,
+    category, badge, discount
+  });
   if(res.ok) { tg.showAlert('تم التعديل ✅'); openAdminPanel(); } else { tg.showAlert(res.error); }
 }
 
@@ -1035,10 +1159,15 @@ function returnToNav() {
 }
 
 /* ============================================================
-   صفحة المتجر + صفحة المنتج
+   ✅✅✅  صفحة المتجر الاحترافية  ✅✅✅
    ============================================================ */
 
 let currentShopProducts = [];
+let shopState = {
+  search: '',
+  category: 'all',
+  sort: 'newest'
+};
 
 async function openShop() {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -1048,42 +1177,170 @@ async function openShop() {
   const content = document.getElementById('shop-content');
   content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
 
-  const data = await apiCall('/api/products');
-  if (!data.ok || !data.products || data.products.length === 0) {
-    content.innerHTML = '<div class="shop-empty">لا توجد منتجات بعد 🛍️</div>';
-    return;
+  const [productsRes, catsRes] = await Promise.all([
+    apiCall('/api/products'),
+    apiCall('/api/categories')
+  ]);
+
+  if (catsRes.ok && Array.isArray(catsRes.categories)) {
+    currentCategories = catsRes.categories;
   }
 
-  currentShopProducts = data.products;
-  renderShopProducts(data.products);
+  if (productsRes.ok && Array.isArray(productsRes.products)) {
+    currentShopProducts = productsRes.products;
+  } else {
+    currentShopProducts = [];
+  }
+
+  shopState = { search: '', category: 'all', sort: 'newest' };
+  const searchInput = document.getElementById('shop-search-input');
+  if (searchInput) searchInput.value = '';
+  const sortSelect = document.getElementById('shop-sort');
+  if (sortSelect) sortSelect.value = 'newest';
+  const clearBtn = document.getElementById('shop-search-clear');
+  if (clearBtn) clearBtn.style.display = 'none';
+
+  renderCategoriesBar();
+  applyShopFilters();
+}
+
+function renderCategoriesBar() {
+  const bar = document.getElementById('shop-categories');
+  if (!bar) return;
+
+  bar.innerHTML = '';
+
+  const allCat = currentCategories.find(c => c.id === 'all') || { id: 'all', name: 'الكل', icon: '🛍️' };
+  const allCats = [allCat, ...currentCategories.filter(c => c.id !== 'all')];
+
+  allCats.forEach(cat => {
+    const chip = document.createElement('div');
+    chip.className = 'cat-chip' + (shopState.category === cat.id ? ' active' : '');
+    chip.innerHTML = `${cat.icon || '📦'} ${cat.name}`;
+    chip.onclick = () => {
+      shopState.category = cat.id;
+      renderCategoriesBar();
+      applyShopFilters();
+    };
+    bar.appendChild(chip);
+  });
+}
+
+function onShopSearch(val) {
+  shopState.search = (val || '').trim().toLowerCase();
+  const clearBtn = document.getElementById('shop-search-clear');
+  if (clearBtn) clearBtn.style.display = val ? 'flex' : 'none';
+  applyShopFilters();
+}
+
+function clearShopSearch() {
+  const input = document.getElementById('shop-search-input');
+  if (input) input.value = '';
+  shopState.search = '';
+  const clearBtn = document.getElementById('shop-search-clear');
+  if (clearBtn) clearBtn.style.display = 'none';
+  applyShopFilters();
+}
+
+function onShopSort(val) {
+  shopState.sort = val;
+  applyShopFilters();
+}
+
+function applyShopFilters() {
+  let list = [...currentShopProducts];
+
+  if (shopState.category && shopState.category !== 'all') {
+    list = list.filter(p => p.category === shopState.category);
+  }
+
+  if (shopState.search) {
+    list = list.filter(p =>
+      (p.name || '').toLowerCase().includes(shopState.search) ||
+      (p.description || '').toLowerCase().includes(shopState.search)
+    );
+  }
+
+  if (shopState.sort === 'newest') {
+    list.sort((a, b) => {
+      const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return db - da;
+    });
+  } else if (shopState.sort === 'cheapest') {
+    list.sort((a, b) => (a.prices?.usd || 0) - (b.prices?.usd || 0));
+  } else if (shopState.sort === 'expensive') {
+    list.sort((a, b) => (b.prices?.usd || 0) - (a.prices?.usd || 0));
+  } else if (shopState.sort === 'popular') {
+    list.sort((a, b) => (b.soldCount || 0) - (a.soldCount || 0));
+  }
+
+  renderShopProducts(list);
+  const countEl = document.getElementById('shop-results-count');
+  if (countEl) countEl.textContent = `${list.length} منتج`;
 }
 
 function renderShopProducts(products) {
   const content = document.getElementById('shop-content');
-  const sorted = [...products].sort((a, b) => {
-    const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    return db - da;
-  });
+
+  if (!products || products.length === 0) {
+    content.innerHTML = '<div class="shop-empty">لا توجد منتجات مطابقة 🔍</div>';
+    return;
+  }
 
   const grid = document.createElement('div');
   grid.className = 'shop-grid';
 
-  sorted.forEach(p => {
+  products.forEach(p => {
+    const card = document.createElement('div');
+function renderShopProducts(products) {
+  const content = document.getElementById('shop-content');
+
+  if (!products || products.length === 0) {
+    content.innerHTML = '<div class="shop-empty">لا توجد منتجات مطابقة 🔍</div>';
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'shop-grid';
+
+  products.forEach(p => {
     const card = document.createElement('div');
     card.className = 'shop-card';
     card.onclick = () => openProduct(p.id);
 
+    // شارة
+    let badgeHTML = '';
+    if (p.discount > 0) {
+      badgeHTML = `<div class="card-badge discount">🔥 -${p.discount}%</div>`;
+    } else if (p.badge === 'new') {
+      badgeHTML = `<div class="card-badge new">⚡ جديد</div>`;
+    } else if (p.badge === 'featured') {
+      badgeHTML = `<div class="card-badge featured">⭐ مميز</div>`;
+    }
+
     const pricesStr = formatPrices(p.prices);
+    const oldPriceStr = p.discount > 0 && p.prices?.usd > 0
+      ? `<span class="card-old-price">$${(p.prices.usd / (1 - p.discount/100)).toFixed(1)}</span>`
+      : '';
+
+    const catName = currentCategories.find(c => c.id === p.category)?.name || '';
 
     card.innerHTML = `
-      ${p.image
-        ? `<img src="${p.image}" class="card-img" alt="">`
-        : `<div class="card-img-placeholder">📦</div>`}
+      <div class="card-img-wrap">
+        ${badgeHTML}
+        ${p.image
+          ? `<img src="${p.image}" class="card-img" alt="">`
+          : `<div class="card-img-placeholder">📦</div>`}
+      </div>
       <div class="card-body">
         <strong>${p.name || 'بدون اسم'}</strong>
         <small>${p.description || ''}</small>
-        <div class="card-price">${pricesStr || '—'}</div>
+        <div class="card-price-row">
+          <span class="card-price">${pricesStr || '—'}</span>
+          ${oldPriceStr}
+          ${catName ? `<span class="card-cat">${catName}</span>` : ''}
+        </div>
       </div>
     `;
     grid.appendChild(card);
@@ -1102,6 +1359,10 @@ function formatPrices(prices) {
   if (prices.sar > 0) parts.push(`🇸🇦 ${prices.sar}`);
   return parts.join(' | ');
 }
+
+/* ============================================================
+   صفحة المنتج المفرد
+   ============================================================ */
 
 async function openProduct(productId) {
   window.location.hash = '#product-' + productId;
@@ -1129,6 +1390,16 @@ async function loadProductPage(productId) {
   }
 
   const pricesStr = formatPrices(product.prices);
+  const catName = currentCategories.find(c => c.id === product.category)?.name || '';
+
+  let badgeHTML = '';
+  if (product.discount > 0) {
+    badgeHTML = `<span class="card-badge discount" style="position:static;display:inline-block;margin-bottom:8px;">🔥 خصم ${product.discount}%</span>`;
+  } else if (product.badge === 'new') {
+    badgeHTML = `<span class="card-badge new" style="position:static;display:inline-block;margin-bottom:8px;">⚡ جديد</span>`;
+  } else if (product.badge === 'featured') {
+    badgeHTML = `<span class="card-badge featured" style="position:static;display:inline-block;margin-bottom:8px;">⭐ مميز</span>`;
+  }
 
   content.innerHTML = `
     <div class="product-hero">
@@ -1138,7 +1409,9 @@ async function loadProductPage(productId) {
     </div>
 
     <div class="product-info">
+      ${badgeHTML}
       <h2>${product.name || 'بدون اسم'}</h2>
+      ${catName ? `<div style="color:#8A2BE2;font-size:12px;margin-bottom:8px;">🏷️ ${catName}</div>` : ''}
       ${product.description ? `<p>${product.description}</p>` : ''}
       ${pricesStr
         ? `<div class="product-prices">
@@ -1155,7 +1428,8 @@ async function loadProductPage(productId) {
 }
 
 function buyProduct(productId) {
-  // ✅ يفتح صفحة المنتج داخلياً
+  // ✅ يفتح صفحة المنتج داخلياً + يزيد عداد المبيعات
+  apiCall('/api/products/increment-sold', { productId }).catch(() => {});
   window.location.hash = '#product-' + productId;
 }
 
@@ -1192,6 +1466,10 @@ function goHome() {
   document.getElementById('page-nav').classList.add('active');
 }
 
+/* ============================================================
+   ✅ مستمع الـ hash (يفتح المنتج داخل التطبيق)
+   ============================================================ */
+
 async function handleHashChange() {
   const hash = window.location.hash.replace('#', '');
   if (!hash) return;
@@ -1202,6 +1480,9 @@ async function handleHashChange() {
       const data = await apiCall('/api/products');
       if (data.ok && data.products) currentShopProducts = data.products;
     }
+    if (currentCategories.length === 0) {
+      await loadCategories();
+    }
     await loadProductPage(productId);
   }
 }
@@ -1210,4 +1491,4 @@ window.addEventListener('hashchange', handleHashChange);
 
 setTimeout(() => {
   if (window.location.hash) handleHashChange();
-}, 1500);
+}, 1500);     
