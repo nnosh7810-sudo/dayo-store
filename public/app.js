@@ -1,5 +1,5 @@
 /* ============================================================
-   DAYO STORE — app.js (نسخة كاملة — رئيسية احترافية)
+   DAYO STORE — app.js (النسخة النهائية)
    ============================================================ */
 
 const tg = window.Telegram?.WebApp;
@@ -83,6 +83,7 @@ async function fetchUserRole() {
     }
   } catch (err) { console.error(err); }
 }
+
 /* ====== أنيميشن الشاحنة ====== */
 document.querySelectorAll('.truck-button').forEach(button => {
   button.addEventListener('click', e => {
@@ -134,7 +135,7 @@ const icons = {
 };
 const svg=(name,size=24,stroke=2)=>`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${icons[name]}</svg>`;
 
-/* ====== معالجة الروابط ====== */
+/* ====== معالجة الروابط (بدون تغيير hash) ====== */
 function extractHash(link) {
   if (!link) return '';
   const idx = link.indexOf('#');
@@ -145,7 +146,13 @@ function extractHash(link) {
 function handleInternalLink(link) {
   if (!link) return;
   const hash = extractHash(link);
-  if (hash) { window.location.hash = hash; return; }
+  if (hash === '#shop') { openShop(); return; }
+  if (hash === '#home') { goHome(); return; }
+  if (hash.startsWith('#product-')) {
+    const productId = hash.replace('#product-', '');
+    openProduct(productId);
+    return;
+  }
   if (link.startsWith('http')) { window.open(link, '_blank'); return; }
   const el = document.getElementById(link);
   if (el) el.scrollIntoView({ behavior: 'smooth' });
@@ -153,7 +160,6 @@ function handleInternalLink(link) {
 
 /* ✅ نسخ رابط أي صفحة */
 function copyPageLink(hash) {
-  // ✅ نسخ الرابط الداخلي فقط (#home, #shop, #product-123)
   const internalLink = hash || '#home';
   navigator.clipboard.writeText(internalLink).then(() => {
     if (tg && tg.showAlert) tg.showAlert('تم نسخ الرابط الداخلي ✅\n\n' + internalLink + '\n\n(يعمل داخل التطبيق فقط)');
@@ -164,13 +170,12 @@ function copyPageLink(hash) {
   });
 }
 
-/* ✅ نسخ رابط المنتج الحالي */
 function copyCurrentProductLink() {
   const hash = window.location.hash;
   if (hash.startsWith('#product-')) copyPageLink(hash);
 }
 
-/* ====== الشريط السفلي ====== */
+/* ====== الشريط السفلي (بدون تغيير hash) ====== */
 function initNav1() {
   const nav1 = document.getElementById('nav1');
   if (!nav1) return;
@@ -201,11 +206,10 @@ function initNav1() {
     spotlight.style.left = left + 'px';
 
     const key = currentTabs[i].key;
-    // ✅ كل صفحة لها مسارها الخاص
     if (key === 'home') {
-      window.location.hash = '#home';
+      goHome();
     } else if (key === 'shop') {
-      window.location.hash = '#shop';
+      openShop();
     } else if (key === 'admin') {
       openAdminPanel();
     } else if (key === 'heart') {
@@ -231,7 +235,6 @@ async function loadStoreData() {
       if (logoEl) { logoEl.style.backgroundImage = `url('${data.store.logo}')`; logoEl.innerText = ''; }
     }
     storeMenuLinks = data.store.menuLinks || {};
-    // ✅ CTA
     if (data.store.heroButton) {
       heroButtonData = data.store.heroButton;
       updateHeroButton();
@@ -513,7 +516,6 @@ async function loadHomeProducts() {
   if (!res.ok || !Array.isArray(res.products)) return;
   currentShopProducts = res.products;
 
-  // وصل حديثاً (آخر 6)
   const newProducts = [...res.products].sort((a, b) => {
     const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -521,7 +523,6 @@ async function loadHomeProducts() {
   }).slice(0, 6);
   renderHScrollProducts('new-products-scroll', newProducts);
 
-  // الأكثر مبيعاً (أعلى soldCount)
   const popular = [...res.products].sort((a, b) => (b.soldCount || 0) - (a.soldCount || 0)).slice(0, 6);
   renderHScrollProducts('popular-products-scroll', popular);
 }
@@ -633,7 +634,7 @@ async function deleteCategory(id) {
 }
 
 /* ============================================================
-   ✅ إدارة الأيقونات المربعة (جديد)
+   إدارة الأيقونات المربعة
    ============================================================ */
 let editingQuickIconIndex = -1;
 let quickIconsBuffer = [];
@@ -734,7 +735,7 @@ async function moveQuickIcon(i, dir) {
 }
 
 /* ============================================================
-   ✅ إدارة زر CTA (جديد)
+   إدارة زر CTA
    ============================================================ */
 function renderHeroButtonAdmin() {
   return `
@@ -1263,13 +1264,12 @@ async function saveMenuLinks() {
 }
 
 /* ============================================================
-   صفحة المتجر
+   صفحة المتجر (بدون تغيير hash)
    ============================================================ */
 async function openShop() {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-shop').classList.add('active');
   document.getElementById('page-nav').classList.add('active');
-  window.location.hash = '#shop';
 
   const content = document.getElementById('shop-content');
   if (!content) return;
@@ -1403,18 +1403,13 @@ function formatPrices(prices) {
 }
 
 /* ============================================================
-   صفحة المنتج
+   صفحة المنتج (بدون تغيير hash)
    ============================================================ */
 async function openProduct(productId) {
-  // ✅ أخفِ كل الصفحات + اعرض صفحة المنتج فوراً
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-product').classList.add('active');
   document.getElementById('page-nav').classList.add('active');
-  // ✅ غيّر الـ hash
-  window.location.hash = '#product-' + productId;
-  // ✅ حمّل التفاصيل
   await loadProductPage(productId);
-  // ✅ ارجع لأعلى
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1463,10 +1458,8 @@ async function loadProductPage(productId) {
 
 function buyProduct(productId) {
   apiCall('/api/products/increment-sold', { productId }).catch(() => {});
-  window.location.hash = '#product-' + productId;
 }
 
-/* ✅ نسخ الرابط الداخلي فقط (#product-xxx) بدون دومين */
 function copyProductLink(productId) {
   const product = currentShopProducts.find(p => p.id === productId);
   const internalLink = product?.link || ('#product-' + productId);
@@ -1484,7 +1477,6 @@ function copyProductLinkFromAdmin(productId) {
 }
 
 function goHome() {
-  window.location.hash = '#home';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-home').classList.add('active');
   document.getElementById('page-nav').classList.add('active');
@@ -1508,60 +1500,12 @@ function showEmptyPage(title, icon, message) {
   `;
   emptyPage.classList.add('active');
   document.getElementById('page-nav').classList.add('active');
-  window.location.hash = '#empty';
 }
 
 function openFavorites() { showEmptyPage('المفضلة', '❤️', 'لا توجد منتجات في المفضلة بعد'); }
 function openCart() { showEmptyPage('السلة', '🛒', 'السلة فاضية'); }
 function openSupport() { showEmptyPage('الدعم الفني', '🎧', 'تواصل معنا عبر تيليجرام أو البريد'); }
 
-/* ============================================================
-   hash listener
-   ============================================================ */
-async function handleHashChange() {
-  const hash = window.location.hash.replace('#', '');
-  if (!hash) return;
-
-  if (hash === 'home') {
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.getElementById('page-home').classList.add('active');
-    document.getElementById('page-nav').classList.add('active');
-    return;
-  }
-
-  if (hash === 'shop') {
-    openShop();
-    return;
-  }
-
-  if (hash === 'empty') {
-    // الصفحة الفارغة تُدار من showEmptyPage — لا شيء هنا
-    return;
-  }
-
-  if (hash.startsWith('product-')) {
-    const productId = hash.replace('product-', '');
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.getElementById('page-product').classList.add('active');
-    document.getElementById('page-nav').classList.add('active');
-    if (currentShopProducts.length === 0) {
-      const data = await apiCall('/api/products');
-      if (data.ok && data.products) currentShopProducts = data.products;
-    }
-    if (currentCategories.length === 0) await loadCategories();
-    await loadProductPage(productId);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    return;
-  }
-}
-/* ============================================================
-   ✅ مستمع الـ hash — يشغّل الصفحات من الروابط
-   ============================================================ */
-window.addEventListener('hashchange', handleHashChange);
-
-setTimeout(() => {
-  if (window.location.hash) handleHashChange();
-}, 800);
 /* ============================================================
    إغلاق لوحة التحكم + العودة
    ============================================================ */
