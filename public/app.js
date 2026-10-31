@@ -1,5 +1,5 @@
 /* ============================================================
-   DAYO STORE — app.js (نسخة كاملة نهائية — متجر احترافي)
+   DAYO STORE — app.js (نسخة كاملة نهائية)
    ============================================================ */
 
 const tg = window.Telegram?.WebApp;
@@ -20,6 +20,10 @@ let editingSectionId = null;
 let sectionImageBuffer = "";
 let sectionItemsBuffer = [];
 
+let currentCategories = [];
+let currentShopProducts = [];
+let shopState = { search: '', category: 'all', sort: 'newest' };
+
 const SECTION_TYPES = {
   grid:     { label: 'شبكة أيقونات (4 أزرار)', color: '#4A90E2' },
   text:     { label: 'قسم نصي',                 color: '#8A2BE2' },
@@ -28,10 +32,20 @@ const SECTION_TYPES = {
   banner:   { label: 'بانر دعائي',              color: '#f39c12' }
 };
 
-document.getElementById('page-nav').classList.remove('active');
-document.getElementById('page-admin').classList.remove('active');
-document.getElementById('page-empty').classList.remove('active');
-document.getElementById('page-truck').classList.add('active');
+/* ✅ حماية من الأخطاء لو العناصر غير موجودة */
+function safeRemoveActive(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('active');
+}
+function safeAddActive(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.add('active');
+}
+
+safeRemoveActive('page-nav');
+safeRemoveActive('page-admin');
+safeRemoveActive('page-empty');
+safeAddActive('page-truck');
 
 async function apiCall(endpoint, body = {}) {
   const response = await fetch(endpoint, {
@@ -54,16 +68,27 @@ async function fetchUserRole() {
       loadStoreData();
       loadSlider();
       loadDynamicSections();
-      loadCategories(); // ✅
+      loadCategories();
     }
   } catch (err) { console.error(err); }
 }
 fetchUserRole();
 
-/* ====== أنيميشن الشاحنة ====== */
+/* ====== أنيميشن الشاحنة (محصّن) ====== */
 document.querySelectorAll('.truck-button').forEach(button => {
   button.addEventListener('click', e => {
     e.preventDefault();
+
+    // حماية لو gsap ما حمّل
+    if (typeof gsap === 'undefined') {
+      console.warn('gsap غير محمّل — الانتقال مباشرة');
+      safeRemoveActive('page-truck');
+      safeAddActive('page-home');
+      safeAddActive('page-nav');
+      if (!nav1Initialized) initNav1();
+      return;
+    }
+
     let box = button.querySelector('.box'), truck = button.querySelector('.truck');
     if (!button.classList.contains('done') && !button.classList.contains('animation')) {
       button.classList.add('animation');
@@ -78,9 +103,9 @@ document.querySelectorAll('.truck-button').forEach(button => {
           gsap.timeline({ onComplete() {
             button.classList.add('done');
             setTimeout(() => {
-              document.getElementById('page-truck').classList.remove('active');
-              document.getElementById('page-home').classList.add('active');
-              document.getElementById('page-nav').classList.add('active');
+              safeRemoveActive('page-truck');
+              safeAddActive('page-home');
+              safeAddActive('page-nav');
               if (!nav1Initialized) initNav1();
             }, 800);
           }})
@@ -105,9 +130,8 @@ const icons = {
 const svg=(name,size=24,stroke=2)=>`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${icons[name]}</svg>`;
 
 /* ============================================================
-   معالجة الروابط (داخل التطبيق)
+   معالجة الروابط
    ============================================================ */
-
 function extractHash(link) {
   if (!link) return '';
   const idx = link.indexOf('#');
@@ -133,6 +157,7 @@ function handleInternalLink(link) {
 /* ====== الشريط السفلي ====== */
 function initNav1() {
   const nav1 = document.getElementById('nav1');
+  if (!nav1) return;
   nav1.innerHTML = '';
   let tabs = [{key:'home'},{key:'heart'},{key:'cart'},{key:'headset'},{key:'shop'}];
   if (userRole !== 'user') tabs.push({key:'admin'});
@@ -165,19 +190,14 @@ function initNav1() {
       openAdminPanel();
     } else if (key === 'shop') {
       openShop();
-    } else if (key === 'home') {
-      window.location.hash = '';
-      document.getElementById('page-admin').classList.remove('active');
-      document.getElementById('page-empty').classList.remove('active');
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      document.getElementById('page-home').classList.add('active');
-      document.getElementById('page-nav').classList.add('active');
     } else {
-      document.getElementById('page-admin').classList.remove('active');
-      document.getElementById('page-empty').classList.remove('active');
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      document.getElementById('page-home').classList.add('active');
-      document.getElementById('page-nav').classList.add('active');
+      window.location.hash = '';
+      safeRemoveActive('page-admin');
+      safeRemoveActive('page-empty');
+      safeRemoveActive('page-shop');
+      safeRemoveActive('page-product');
+      safeAddActive('page-home');
+      safeAddActive('page-nav');
     }
   }
   setTimeout(() => setNav1(0, tabs), 50);
@@ -188,24 +208,37 @@ function initNav1() {
 async function loadStoreData() {
   const data = await apiCall('/api/store');
   if (data.ok && data.store) {
-    document.getElementById('store-name').textContent = data.store.name;
-    document.getElementById('store-users').textContent = (data.store.usersCount || 0).toLocaleString();
-    document.getElementById('store-online').textContent = (data.store.onlineCount || 0).toLocaleString();
+    const nameEl = document.getElementById('store-name');
+    const usersEl = document.getElementById('store-users');
+    const onlineEl = document.getElementById('store-online');
+    if (nameEl) nameEl.textContent = data.store.name;
+    if (usersEl) usersEl.textContent = (data.store.usersCount || 0).toLocaleString();
+    if (onlineEl) onlineEl.textContent = (data.store.onlineCount || 0).toLocaleString();
     if (data.store.logo) {
       const logoEl = document.getElementById('store-logo');
-      logoEl.style.backgroundImage = `url('${data.store.logo}')`;
-      logoEl.innerText = '';
+      if (logoEl) {
+        logoEl.style.backgroundImage = `url('${data.store.logo}')`;
+        logoEl.innerText = '';
+      }
     }
     storeMenuLinks = data.store.menuLinks || {};
     if (userRole === 'owner') {
-      document.getElementById('edit-cover-btn').style.display = 'block';
-      document.getElementById('edit-logo-btn').style.display = 'block';
+      const coverBtn = document.getElementById('edit-cover-btn');
+      const logoBtn = document.getElementById('edit-logo-btn');
+      if (coverBtn) coverBtn.style.display = 'block';
+      if (logoBtn) logoBtn.style.display = 'block';
     }
   }
 }
 
-function editCover() { document.getElementById('cover-upload').click(); }
-function editLogo() { document.getElementById('logo-upload').click(); }
+function editCover() {
+  const el = document.getElementById('cover-upload');
+  if (el) el.click();
+}
+function editLogo() {
+  const el = document.getElementById('logo-upload');
+  if (el) el.click();
+}
 
 async function handleCoverUpload(input) {
   const file = input.files[0]; if (!file) return;
@@ -236,13 +269,14 @@ async function loadSlider() {
 function renderSlider(slides) {
   const track = document.getElementById('slider-track');
   const dotsContainer = document.getElementById('slider-dots');
+  if (!track || !dotsContainer) return;
   track.innerHTML = '';
   dotsContainer.innerHTML = '';
 
   if (sliderInterval) clearInterval(sliderInterval);
 
   if (slides.length === 0) {
-    track.innerHTML = '<div style="color:#a0c4ff; text-align:center; width:100%; padding-top:80px;">لا توجد صور حالياً. أضف صوراً من لوحة التحكم.</div>';
+    track.innerHTML = '<div style="color:#a0c4ff; text-align:center; width:100%; padding-top:80px;">لا توجد صور حالياً.</div>';
     return;
   }
 
@@ -257,7 +291,7 @@ function renderSlider(slides) {
     contentHTML += `<span class="slide-badge">👑 عروض خاصة</span>`;
     if (slide.title) contentHTML += `<h3 class="slide-title">${slide.title}</h3>`;
     if (slide.btnText && slide.btnLink) {
-      contentHTML += `<a href="javascript:void(0)" onclick="handleInternalLink('${slide.btnLink.replace(/'/g, "\\'")}')" class="slide-btn">${slide.btnText} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></a>`;
+      contentHTML += `<a href="javascript:void(0)" onclick="handleInternalLink('${slide.btnLink.replace(/'/g, "\\'")}')" class="slide-btn">${slide.btnText}</a>`;
     }
     contentHTML += `</div>`;
     slideDiv.innerHTML = contentHTML;
@@ -275,6 +309,7 @@ function renderSlider(slides) {
 function goToSlide(index, totalSlides) {
   const track = document.getElementById('slider-track');
   const dots = document.querySelectorAll('.slider-dot');
+  if (!track) return;
   if (index >= totalSlides) index = 0;
   if (index < 0) index = totalSlides - 1;
   currentSlideIndex = index;
@@ -294,15 +329,18 @@ async function handleSliderImageUpload(input) {
   try {
     const base64 = await compressImage(file, 800, 400);
     currentSliderImage = base64;
-    document.getElementById('slider-preview').style.backgroundImage = `url('${base64}')`;
-    document.getElementById('slider-preview').innerText = '';
+    const el = document.getElementById('slider-preview');
+    if (el) {
+      el.style.backgroundImage = `url('${base64}')`;
+      el.innerText = '';
+    }
   } catch (err) { alert('حدث خطأ'); }
 }
 
 async function addSlide() {
-  const title = document.getElementById('slide-title').value;
-  const btnText = document.getElementById('slide-btn-text').value;
-  const btnLink = document.getElementById('slide-btn-link').value;
+  const title = document.getElementById('slide-title')?.value || '';
+  const btnText = document.getElementById('slide-btn-text')?.value || '';
+  const btnLink = document.getElementById('slide-btn-link')?.value || '';
   if (!currentSliderImage) return alert('اختر صورة أولاً');
   const res = await apiCall('/api/slider/add', { image: currentSliderImage, title, btnText, btnLink });
   if (res.ok) {
@@ -321,10 +359,10 @@ async function deleteSlide(id) {
 
 async function saveMenuLinks() {
   const links = {
-    telegram: document.getElementById('link-telegram').value,
-    nft: document.getElementById('link-nft').value,
-    social: document.getElementById('link-social').value,
-    games: document.getElementById('link-games').value
+    telegram: document.getElementById('link-telegram')?.value || '',
+    nft: document.getElementById('link-nft')?.value || '',
+    social: document.getElementById('link-social')?.value || '',
+    games: document.getElementById('link-games')?.value || ''
   };
   const res = await apiCall('/api/store/update-links', { links });
   if(res.ok) {
@@ -368,15 +406,17 @@ async function handleImageUpload(input, previewId) {
   try {
     const base64 = await compressImage(file);
     currentBase64Image = base64;
-    document.getElementById(previewId).style.backgroundImage = `url('${base64}')`;
-    document.getElementById(previewId).innerText = '';
+    const el = document.getElementById(previewId);
+    if (el) {
+      el.style.backgroundImage = `url('${base64}')`;
+      el.innerText = '';
+    }
   } catch (err) { alert('حدث خطأ'); }
 }
 
 /* ============================================================
-   نظام الأقسام الديناميكي
+   نظام الأقسام
    ============================================================ */
-
 async function loadDynamicSections() {
   const data = await apiCall('/api/sections');
   if (data.ok && Array.isArray(data.sections)) {
@@ -395,7 +435,7 @@ function renderDynamicSections() {
     .sort((a, b) => (a.order || 0) - (b.order || 0));
 
   if (visible.length === 0) {
-    container.innerHTML = '<p style="text-align:center;color:#a0c4ff;font-size:13px;padding:20px;">لا توجد أقسام. أضفها من لوحة التحكم.</p>';
+    container.innerHTML = '<p style="text-align:center;color:#a0c4ff;font-size:13px;padding:20px;">لا توجد أقسام.</p>';
     return;
   }
 
@@ -403,7 +443,6 @@ function renderDynamicSections() {
     const el = document.createElement('div');
     el.className = 'dynamic-section';
     el.id = `section-${sec.id}`;
-
     const safeBtnLink = (sec.buttonLink || '').replace(/'/g, "\\'");
 
     if (sec.type === 'grid') {
@@ -414,9 +453,7 @@ function renderDynamicSections() {
         const itemDiv = document.createElement('div');
         itemDiv.className = 'grid-item';
         itemDiv.onclick = () => handleInternalLink(item.link);
-        const iconHTML = item.image
-          ? `<img src="${item.image}" alt="">`
-          : `<span>${item.icon || '📦'}</span>`;
+        const iconHTML = item.image ? `<img src="${item.image}" alt="">` : `<span>${item.icon || '📦'}</span>`;
         itemDiv.innerHTML = `
           <div class="grid-icon" style="color:${item.color || '#4A90E2'};">${iconHTML}</div>
           <div class="grid-title">${item.title || 'عنصر'}</div>
@@ -425,18 +462,10 @@ function renderDynamicSections() {
       });
       el.appendChild(grid);
 
-    } else if (sec.type === 'text') {
+    } else if (sec.type === 'text' || sec.type === 'image' || sec.type === 'banner') {
       el.innerHTML = `
-        ${sec.image ? `<img src="${sec.image}" alt="">` : ''}
+        ${sec.image ? `<img src="${sec.image}" alt="${sec.type === 'banner' ? 'style="height:140px;object-fit:cover;"' : ''}">` : ''}
         ${sec.title ? `<h2>${sec.title}</h2>` : ''}
-        ${sec.content ? `<p>${sec.content}</p>` : ''}
-        ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="javascript:void(0)" onclick="handleInternalLink('${safeBtnLink}')">${sec.buttonText}</a>` : ''}
-      `;
-
-    } else if (sec.type === 'image') {
-      el.innerHTML = `
-        ${sec.title ? `<h2>${sec.title}</h2>` : ''}
-        ${sec.image ? `<img src="${sec.image}" alt="">` : ''}
         ${sec.content ? `<p>${sec.content}</p>` : ''}
         ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="javascript:void(0)" onclick="handleInternalLink('${safeBtnLink}')">${sec.buttonText}</a>` : ''}
       `;
@@ -461,34 +490,92 @@ function renderDynamicSections() {
         grid.appendChild(card);
       });
       el.appendChild(grid);
-
-    } else if (sec.type === 'banner') {
-      el.innerHTML = `
-        ${sec.image ? `<img src="${sec.image}" alt="" style="height:140px;object-fit:cover;">` : ''}
-        ${sec.title ? `<h2>${sec.title}</h2>` : ''}
-        ${sec.content ? `<p>${sec.content}</p>` : ''}
-        ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="javascript:void(0)" onclick="handleInternalLink('${safeBtnLink}')">${sec.buttonText}</a>` : ''}
-      `;
     }
 
     container.appendChild(el);
   });
 }
 
-function handleSectionItemClick(item) {
-  handleInternalLink(item?.link);
+/* ============================================================
+   ✅✅✅  التصنيفات  ✅✅✅
+   ============================================================ */
+async function loadCategories() {
+  const res = await apiCall('/api/categories');
+  if (res.ok && Array.isArray(res.categories)) {
+    currentCategories = res.categories;
+  }
+}
+
+function renderCategoriesAdmin() {
+  return `
+    <hr style="border-color:#333;margin:20px 0;">
+    <div class="admin-form">
+      <h3 style="margin-top:0;color:white;">🏷️ إدارة التصنيفات</h3>
+      <div id="categories-list"></div>
+      <div style="display:flex;gap:6px;margin-top:10px;">
+        <input type="text" id="new-cat-name" placeholder="اسم التصنيف" style="flex:2;margin-bottom:0;">
+        <input type="text" id="new-cat-icon" placeholder="📦" maxlength="2" style="flex:1;margin-bottom:0;text-align:center;">
+        <button class="primary" onclick="addCategory()" style="flex:1;margin-top:0;">➕</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderCategoriesList() {
+  const list = document.getElementById('categories-list');
+  if (!list) return;
+  if (!currentCategories || currentCategories.length === 0) {
+    list.innerHTML = '<p style="color:#a0c4ff;font-size:12px;">لا توجد تصنيفات.</p>';
+    return;
+  }
+  list.innerHTML = currentCategories.map(cat => `
+    <div class="admin-section-card" style="margin-bottom:6px;">
+      <div class="info">
+        <strong>${cat.icon || '📦'} ${cat.name}</strong>
+        <small>ID: ${cat.id}</small>
+      </div>
+      <div class="actions">
+        ${cat.id !== 'all' ? `<button class="btn-delete" onclick="deleteCategory('${cat.id}')">🗑️</button>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+async function addCategory() {
+  const name = document.getElementById('new-cat-name')?.value.trim();
+  const icon = document.getElementById('new-cat-icon')?.value.trim() || '📦';
+  if (!name) return alert('أدخل اسم التصنيف');
+  const id = 'cat_' + Date.now();
+  const newCats = [...currentCategories, { id, name, icon }];
+  const res = await apiCall('/api/categories/save', { categories: newCats });
+  if (res.ok) {
+    currentCategories = newCats;
+    document.getElementById('new-cat-name').value = '';
+    document.getElementById('new-cat-icon').value = '';
+    renderCategoriesList();
+    tg.showAlert('تمت إضافة التصنيف ✅');
+  } else { tg.showAlert(res.error); }
+}
+
+async function deleteCategory(id) {
+  if (!confirm('حذف هذا التصنيف؟')) return;
+  const newCats = currentCategories.filter(c => c.id !== id);
+  const res = await apiCall('/api/categories/save', { categories: newCats });
+  if (res.ok) {
+    currentCategories = newCats;
+    renderCategoriesList();
+    tg.showAlert('تم الحذف ✅');
+  } else { tg.showAlert(res.error); }
 }
 
 /* ============================================================
-   لوحة تحكم إدارة الأقسام
+   إدارة الأقسام (لوحة التحكم)
    ============================================================ */
-
 function renderSectionsAdmin() {
   let listHTML = '';
   const sorted = [...dynamicSections].sort((a,b) => (a.order||0)-(b.order||0));
-
   if (sorted.length === 0) {
-    listHTML = '<p style="color:#a0c4ff;font-size:13px;">لا توجد أقسام بعد. أضف أول قسم من الأعلى.</p>';
+    listHTML = '<p style="color:#a0c4ff;font-size:13px;">لا توجد أقسام بعد.</p>';
   } else {
     listHTML = sorted.map((sec, idx) => {
       const typeInfo = SECTION_TYPES[sec.type] || { label: sec.type, color: '#666' };
@@ -500,26 +587,23 @@ function renderSectionsAdmin() {
             <small>
               <span class="type-badge" style="background:${typeInfo.color};">${typeInfo.label}</span>
               ${visibleLabel} — ترتيب: ${idx + 1}
-              ${sec.items && sec.items.length ? ` — ${sec.items.length} عنصر` : ''}
             </small>
           </div>
           <div class="actions">
-            <button class="btn-up" onclick="moveSection('${sec.id}', -1)" title="أعلى">⬆️</button>
-            <button class="btn-down" onclick="moveSection('${sec.id}', 1)" title="أسفل">⬇️</button>
-            <button class="btn-toggle" onclick="toggleSectionVisibility('${sec.id}')" title="إظهار/إخفاء">${sec.visible === false ? '👁️‍🗨️' : '👁️'}</button>
-            <button class="btn-edit" onclick="openSectionEditor('${sec.id}')" title="تعديل">✏️</button>
-            <button class="btn-delete" onclick="deleteSection('${sec.id}')" title="حذف">🗑️</button>
+            <button class="btn-up" onclick="moveSection('${sec.id}', -1)">⬆️</button>
+            <button class="btn-down" onclick="moveSection('${sec.id}', 1)">⬇️</button>
+            <button class="btn-toggle" onclick="toggleSectionVisibility('${sec.id}')">${sec.visible === false ? '👁️‍🗨️' : '👁️'}</button>
+            <button class="btn-edit" onclick="openSectionEditor('${sec.id}')">✏️</button>
+            <button class="btn-delete" onclick="deleteSection('${sec.id}')">🗑️</button>
           </div>
         </div>
       `;
     }).join('');
   }
-
   return `
     <hr style="border-color:#333;margin:20px 0;">
     <div class="admin-form">
       <h3 style="margin-top:0;color:white;">🗂️ إدارة الأقسام</h3>
-      <p style="color:#a0c4ff;font-size:12px;">أضف/عدّل/رتّب أقسام الصفحة الرئيسية. التغييرات تُطبَّق فوراً بعد الحفظ.</p>
       <button class="primary" onclick="openSectionEditor(null)">➕ إضافة قسم جديد</button>
       <div id="section-editor-container"></div>
     </div>
@@ -531,12 +615,11 @@ function renderSectionsAdmin() {
 function openSectionEditor(sectionId) {
   editingSectionId = sectionId;
   const sec = sectionId ? dynamicSections.find(s => s.id === sectionId) : null;
-
   sectionImageBuffer = sec?.image || '';
   sectionItemsBuffer = sec?.items ? JSON.parse(JSON.stringify(sec.items)) : [];
-
   const currentType = sec?.type || 'grid';
   const container = document.getElementById('section-editor-container');
+  if (!container) return;
 
   let typeOptions = Object.entries(SECTION_TYPES).map(([key, val]) =>
     `<option value="${key}" ${key === currentType ? 'selected' : ''}>${val.label}</option>`
@@ -545,20 +628,15 @@ function openSectionEditor(sectionId) {
   container.innerHTML = `
     <div class="admin-form" style="margin-top:15px;">
       <h3 style="margin-top:0;">${sectionId ? '✏️ تعديل قسم' : '➕ قسم جديد'}</h3>
-
       <label>عنوان القسم</label>
-      <input type="text" id="sec-title" value="${sec?.title || ''}" placeholder="مثال: خدماتنا">
-
+      <input type="text" id="sec-title" value="${sec?.title || ''}">
       <label>نوع القسم</label>
       <select id="sec-type" onchange="onSectionTypeChange()">${typeOptions}</select>
-
       <div id="sec-type-fields"></div>
-
-      <button class="primary" onclick="saveSection()">${sectionId ? '💾 حفظ التعديلات' : '➕ إضافة القسم'}</button>
+      <button class="primary" onclick="saveSection()">${sectionId ? '💾 حفظ' : '➕ إضافة'}</button>
       <button class="danger" onclick="closeSectionEditor()">إلغاء</button>
     </div>
   `;
-
   onSectionTypeChange();
 }
 
@@ -571,10 +649,12 @@ function closeSectionEditor() {
 }
 
 function onSectionTypeChange() {
-  const type = document.getElementById('sec-type').value;
+  const typeEl = document.getElementById('sec-type');
+  if (!typeEl) return;
+  const type = typeEl.value;
   const fields = document.getElementById('sec-type-fields');
+  if (!fields) return;
   const sec = editingSectionId ? dynamicSections.find(s => s.id === editingSectionId) : null;
-
   let html = '';
 
   if (['text', 'image', 'banner'].includes(type)) {
@@ -583,22 +663,12 @@ function onSectionTypeChange() {
       <div class="img-preview-box" id="sec-img-preview" style="${sectionImageBuffer ? `background-image:url('${sectionImageBuffer}')` : ''}">${sectionImageBuffer ? '' : 'لا توجد'}</div>
       <input type="file" id="sec-img-file" accept="image/*" class="hidden-file" onchange="handleSectionImageUpload(this)">
       <label for="sec-img-file" class="img-upload-label">📷 اختر صورة</label>
-    `;
-  }
-
-  if (['text', 'image', 'banner'].includes(type)) {
-    html += `
       <label>محتوى نصي</label>
-      <textarea id="sec-content" rows="3" placeholder="اكتب الوصف...">${sec?.content || ''}</textarea>
-    `;
-  }
-
-  if (['text', 'image', 'banner'].includes(type)) {
-    html += `
-      <label>نص الزر (اختياري)</label>
-      <input type="text" id="sec-btn-text" value="${sec?.buttonText || ''}" placeholder="مثال: اضغط هنا">
-      <label>رابط الزر (اختياري)</label>
-      <input type="text" id="sec-btn-link" value="${sec?.buttonLink || ''}" placeholder="#product-123 أو https://...">
+      <textarea id="sec-content" rows="3">${sec?.content || ''}</textarea>
+      <label>نص الزر</label>
+      <input type="text" id="sec-btn-text" value="${sec?.buttonText || ''}">
+      <label>رابط الزر</label>
+      <input type="text" id="sec-btn-link" value="${sec?.buttonLink || ''}" placeholder="#product-123">
     `;
   }
 
@@ -625,31 +695,28 @@ async function handleSectionImageUpload(input) {
 function renderSectionItems() {
   const list = document.getElementById('sec-items-list');
   if (!list) return;
-
   if (sectionItemsBuffer.length === 0) {
-    list.innerHTML = '<p style="color:#a0c4ff;font-size:12px;">لا توجد عناصر بعد.</p>';
+    list.innerHTML = '<p style="color:#a0c4ff;font-size:12px;">لا توجد عناصر.</p>';
     return;
   }
-
   list.innerHTML = sectionItemsBuffer.map((item, i) => `
     <div class="item-editor">
       <div class="item-row">
         <input type="text" placeholder="العنوان" value="${item.title || ''}" oninput="updateSectionItem(${i}, 'title', this.value)">
-        <input type="text" placeholder="الأيقونة (إيموجي)" value="${item.icon || ''}" oninput="updateSectionItem(${i}, 'icon', this.value)" style="max-width:80px;">
+        <input type="text" placeholder="الأيقونة" value="${item.icon || ''}" oninput="updateSectionItem(${i}, 'icon', this.value)" style="max-width:80px;">
       </div>
       <div class="item-row">
-        <input type="text" placeholder="الرابط (#product-123 أو https://...)" value="${item.link || ''}" oninput="updateSectionItem(${i}, 'link', this.value)">
+        <input type="text" placeholder="الرابط" value="${item.link || ''}" oninput="updateSectionItem(${i}, 'link', this.value)">
         <input type="text" placeholder="الوصف" value="${item.description || ''}" oninput="updateSectionItem(${i}, 'description', this.value)">
       </div>
       <div class="item-row">
-        <input type="text" placeholder="السعر (اختياري)" value="${item.price || ''}" oninput="updateSectionItem(${i}, 'price', this.value)">
+        <input type="text" placeholder="السعر" value="${item.price || ''}" oninput="updateSectionItem(${i}, 'price', this.value)">
         <label class="img-upload-label" style="margin:0;padding:6px 10px;">
-          📷 صورة
-          <input type="file" accept="image/*" style="display:none;" onchange="handleSectionItemImage(${i}, this)">
+          📷<input type="file" accept="image/*" style="display:none;" onchange="handleSectionItemImage(${i}, this)">
         </label>
-        ${item.image ? `<span style="color:#4AE2A0;font-size:11px;">✓ صورة مرفقة</span>` : ''}
+        ${item.image ? `<span style="color:#4AE2A0;font-size:11px;">✓</span>` : ''}
       </div>
-      <button class="remove-item" onclick="removeSectionItem(${i})">🗑️ حذف العنصر</button>
+      <button class="remove-item" onclick="removeSectionItem(${i})">🗑️ حذف</button>
     </div>
   `).join('');
 }
@@ -679,9 +746,8 @@ async function handleSectionItemImage(i, input) {
 }
 
 async function saveSection() {
-  const title = document.getElementById('sec-title').value.trim();
-  const type = document.getElementById('sec-type').value;
-
+  const title = document.getElementById('sec-title')?.value.trim();
+  const type = document.getElementById('sec-type')?.value;
   if (!title) return alert('أدخل عنوان القسم');
 
   const payload = {
@@ -735,16 +801,12 @@ async function moveSection(id, direction) {
   const sorted = [...dynamicSections].sort((a,b)=>(a.order||0)-(b.order||0));
   const idx = sorted.findIndex(s => s.id === id);
   if (idx === -1) return;
-
   const newIdx = idx + direction;
   if (newIdx < 0 || newIdx >= sorted.length) return;
-
   const tmp = sorted[idx];
   sorted[idx] = sorted[newIdx];
   sorted[newIdx] = tmp;
-
   const orders = sorted.map((s, i) => ({ id: s.id, order: i }));
-
   const res = await apiCall('/api/sections/reorder', { orders });
   if (res.ok) {
     await loadDynamicSections();
@@ -755,99 +817,17 @@ async function moveSection(id, direction) {
 }
 
 /* ============================================================
-   ✅✅✅  إدارة التصنيفات  ✅✅✅
+   لوحة التحكم
    ============================================================ */
-
-let currentCategories = [];
-
-async function loadCategories() {
-  const res = await apiCall('/api/categories');
-  if (res.ok && Array.isArray(res.categories)) {
-    currentCategories = res.categories;
-  }
-}
-
-function renderCategoriesAdmin() {
-  return `
-    <hr style="border-color:#333;margin:20px 0;">
-    <div class="admin-form">
-      <h3 style="margin-top:0;color:white;">🏷️ إدارة التصنيفات</h3>
-      <p style="color:#a0c4ff;font-size:12px;">أضف/احذف تصنيفات المتجر. تظهر في صفحة المتجر كأزرار فلترة.</p>
-      <div id="categories-list"></div>
-      <div style="display:flex;gap:6px;margin-top:10px;">
-        <input type="text" id="new-cat-name" placeholder="اسم التصنيف" style="flex:2;margin-bottom:0;">
-        <input type="text" id="new-cat-icon" placeholder="📦" maxlength="2" style="flex:1;margin-bottom:0;text-align:center;">
-        <button class="primary" onclick="addCategory()" style="flex:1;margin-top:0;">➕</button>
-      </div>
-    </div>
-  `;
-}
-
-function renderCategoriesList() {
-  const list = document.getElementById('categories-list');
-  if (!list) return;
-
-  if (!currentCategories || currentCategories.length === 0) {
-    list.innerHTML = '<p style="color:#a0c4ff;font-size:12px;">لا توجد تصنيفات.</p>';
-    return;
-  }
-
-  list.innerHTML = currentCategories.map(cat => `
-    <div class="admin-section-card" style="margin-bottom:6px;">
-      <div class="info">
-        <strong>${cat.icon || '📦'} ${cat.name}</strong>
-        <small>ID: ${cat.id}</small>
-      </div>
-      <div class="actions">
-        ${cat.id !== 'all' ? `<button class="btn-delete" onclick="deleteCategory('${cat.id}')">🗑️</button>` : ''}
-      </div>
-    </div>
-  `).join('');
-}
-
-async function addCategory() {
-  const name = document.getElementById('new-cat-name').value.trim();
-  const icon = document.getElementById('new-cat-icon').value.trim() || '📦';
-  if (!name) return alert('أدخل اسم التصنيف');
-
-  const id = 'cat_' + Date.now();
-  const newCats = [...currentCategories, { id, name, icon }];
-
-  const res = await apiCall('/api/categories/save', { categories: newCats });
-  if (res.ok) {
-    currentCategories = newCats;
-    document.getElementById('new-cat-name').value = '';
-    document.getElementById('new-cat-icon').value = '';
-    renderCategoriesList();
-    tg.showAlert('تمت إضافة التصنيف ✅');
-  } else {
-    tg.showAlert(res.error);
-  }
-}
-
-async function deleteCategory(id) {
-  if (!confirm('حذف هذا التصنيف؟')) return;
-  const newCats = currentCategories.filter(c => c.id !== id);
-  const res = await apiCall('/api/categories/save', { categories: newCats });
-  if (res.ok) {
-    currentCategories = newCats;
-    renderCategoriesList();
-    tg.showAlert('تم الحذف ✅');
-  } else {
-    tg.showAlert(res.error);
-  }
-}
-
-/* ============================================================
-   لوحة التحكم الرئيسية
-   ============================================================ */
-
 async function openAdminPanel() {
-  document.getElementById('page-home').classList.remove('active');
-  document.getElementById('page-nav').classList.remove('active');
-  document.getElementById('page-admin').classList.add('active');
+  safeRemoveActive('page-home');
+  safeRemoveActive('page-nav');
+  safeRemoveActive('page-shop');
+  safeRemoveActive('page-product');
+  safeAddActive('page-admin');
 
   const content = document.getElementById('admin-content');
+  if (!content) return;
   content.innerHTML = `<div class="custom-loader-wrapper"><div class="loader"><p class="loader-text">جاري التحميل...</p><span class="load"></span></div></div>`;
 
   const [data, sliderData, staffData, sectionsData, catsData] = await Promise.all([
@@ -862,172 +842,154 @@ async function openAdminPanel() {
     dynamicSections = sectionsData.sections;
     renderDynamicSections();
   }
-
   if (catsData.ok && Array.isArray(catsData.categories)) {
     currentCategories = catsData.categories;
   }
+  if (data.ok && Array.isArray(data.products)) {
+    currentShopProducts = data.products;
+  }
 
-  // ===== المنتجات =====
+  // المنتجات
   let productsHTML = '';
   if (data.ok && data.products.length > 0) {
     productsHTML = data.products.map(p => {
       let pricesStr = [];
       if (p.prices?.usd > 0) pricesStr.push(`$${p.prices.usd}`);
-      if (p.prices?.ton > 0) pricesStr.push(`💎 ${p.prices.ton} TON`);
+      if (p.prices?.ton > 0) pricesStr.push(`💎 ${p.prices.ton}`);
       if (p.prices?.stars > 0) pricesStr.push(`⭐ ${p.prices.stars}`);
-      if (p.prices?.sar > 0) pricesStr.push(`🇸🇦 ${p.prices.sar} ريال`);
-      const imgTag = p.image ? `<img src="${p.image}" style="width: 50px; height: 50px; border-radius: 5px; object-fit: cover; margin-left: 10px;">` : '';
+      if (p.prices?.sar > 0) pricesStr.push(`🇸🇦 ${p.prices.sar}`);
+      const imgTag = p.image ? `<img src="${p.image}" style="width:50px;height:50px;border-radius:5px;object-fit:cover;margin-left:10px;">` : '';
       const link = p.link || ('#product-' + p.id);
       const catName = currentCategories.find(c => c.id === p.category)?.name || '';
-      return `<div style="background: #152a47; padding: 12px; margin-bottom: 12px; border-radius: 10px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">
-        <div style="display: flex; align-items: center; flex: 1; min-width: 180px;">${imgTag}<div>
-          <strong style="font-size: 16px; color: white;">${p.name}</strong>
-          <p style="font-size: 12px; color: #a0c4ff; margin: 4px 0;">${p.description}</p>
-          <div style="font-size: 13px; color: #fff; margin-bottom: 4px;">${pricesStr.join(' | ') || 'لا يوجد سعر'}</div>
-          ${catName ? `<div style="font-size: 11px; color: #8A2BE2;">🏷️ ${catName}</div>` : ''}
-          <div style="font-size: 11px; color: #4AE2A0; margin-top: 4px;">🔗 ${link}</div>
+      return `<div style="background:#152a47;padding:12px;margin-bottom:12px;border-radius:10px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
+        <div style="display:flex;align-items:center;flex:1;min-width:180px;">${imgTag}<div>
+          <strong style="font-size:16px;color:white;">${p.name}</strong>
+          <p style="font-size:12px;color:#a0c4ff;margin:4px 0;">${p.description}</p>
+          <div style="font-size:13px;color:#fff;">${pricesStr.join(' | ') || 'لا يوجد سعر'}</div>
+          ${catName ? `<div style="font-size:11px;color:#8A2BE2;">🏷️ ${catName}</div>` : ''}
+          <div style="font-size:11px;color:#4AE2A0;margin-top:4px;">🔗 ${link}</div>
         </div></div>
-        <div style="display: flex; flex-direction: column; gap: 5px;">
-          <button onclick="copyProductLinkFromAdmin('${p.id}')" style="background: #4A90E2; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">📋 نسخ الرابط</button>
-          <button onclick="editProductForm('${p.id}')" style="background: #f39c12; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">تعديل</button>
-          <button onclick="deleteProduct('${p.id}')" style="background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">حذف</button>
+        <div style="display:flex;flex-direction:column;gap:5px;">
+          <button onclick="copyProductLinkFromAdmin('${p.id}')" style="background:#4A90E2;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">📋 نسخ</button>
+          <button onclick="editProductForm('${p.id}')" style="background:#f39c12;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">تعديل</button>
+          <button onclick="deleteProduct('${p.id}')" style="background:#e74c3c;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">حذف</button>
         </div>
       </div>`;
     }).join('');
   } else { productsHTML = '<p>لا توجد منتجات.</p>'; }
 
-  // ===== المشرفين =====
+  // المشرفين
   let staffHTML = '';
   if (userRole === 'owner' || userRole === 'admin') {
     if (staffData.ok && staffData.staff.length > 0) {
       staffHTML = staffData.staff.map(s => {
         const roleName = s.role === 'admin' ? 'مسؤول' : 'مشرف';
-        const roleColor = s.role === 'admin' ? '#e74c3c' : '#f39c12';
         const canEdit = userRole === 'owner' || (userRole === 'admin' && s.role === 'moderator');
-        return `<div style="background: #152a47; padding: 10px; margin-bottom: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
-          <div><strong style="color: white;">${s.name}</strong> <span style="color: ${roleColor}; font-size: 12px;">(${roleName})</span><br><small style="color: #888;">ID: ${s.id}</small></div>
-          ${canEdit ? `<div style="display: flex; gap: 5px;">
-            ${s.role === 'moderator' && userRole === 'owner' ? `<button onclick="updateRole('${s.id}', 'admin')" style="background: #3498db; color: white; border: none; padding: 5px 8px; border-radius: 5px; font-size: 11px;">ترقية</button>` : ''}
-            ${s.role === 'admin' && userRole === 'owner' ? `<button onclick="updateRole('${s.id}', 'moderator')" style="background: #f39c12; color: white; border: none; padding: 5px 8px; border-radius: 5px; font-size: 11px;">تنزيل</button>` : ''}
-            <button onclick="updateRole('${s.id}', 'user')" style="background: #e74c3c; color: white; border: none; padding: 5px 8px; border-radius: 5px; font-size: 11px;">إزالة</button>
+        return `<div style="background:#152a47;padding:10px;margin-bottom:10px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+          <div><strong style="color:white;">${s.name}</strong> <span style="color:#f39c12;font-size:12px;">(${roleName})</span><br><small style="color:#888;">ID: ${s.id}</small></div>
+          ${canEdit ? `<div style="display:flex;gap:5px;">
+            ${s.role === 'moderator' && userRole === 'owner' ? `<button onclick="updateRole('${s.id}','admin')" style="background:#3498db;color:white;border:none;padding:5px 8px;border-radius:5px;font-size:11px;">ترقية</button>` : ''}
+            <button onclick="updateRole('${s.id}','user')" style="background:#e74c3c;color:white;border:none;padding:5px 8px;border-radius:5px;font-size:11px;">إزالة</button>
           </div>` : ''}
         </div>`;
       }).join('');
     } else { staffHTML = '<p>لا يوجد مشرفين.</p>'; }
   }
 
-  // ===== السلايدر =====
+  // السلايدر
   let sliderHTML = '';
-  if (userRole === 'owner') {
-    if (sliderData.ok && sliderData.slides.length > 0) {
-      sliderHTML = sliderData.slides.map(s => `
-        <div style="background: #152a47; padding: 10px; margin-bottom: 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <img src="${s.image}" style="width: 60px; height: 40px; border-radius: 5px; object-fit: cover;">
-            <div><strong style="color: white; font-size: 14px;">${s.title || 'بدون عنوان'}</strong><br>${s.btnText ? `<small style="color: #4A90E2;">زر: ${s.btnText}</small>` : ''}</div>
-          </div>
-          <button onclick="deleteSlide('${s.id}')" style="background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">حذف</button>
+  if (userRole === 'owner' && sliderData.ok && sliderData.slides.length > 0) {
+    sliderHTML = sliderData.slides.map(s => `
+      <div style="background:#152a47;padding:10px;margin-bottom:10px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <img src="${s.image}" style="width:60px;height:40px;border-radius:5px;object-fit:cover;">
+          <strong style="color:white;font-size:14px;">${s.title || 'بدون عنوان'}</strong>
         </div>
-      `).join('');
-    } else { sliderHTML = '<p>لا توجد صور في السلايدر.</p>'; }
+        <button onclick="deleteSlide('${s.id}')" style="background:#e74c3c;color:white;border:none;padding:5px 10px;border-radius:5px;font-size:12px;">حذف</button>
+      </div>
+    `).join('');
+  } else if (userRole === 'owner') {
+    sliderHTML = '<p>لا توجد صور.</p>';
   }
 
   const store = storeMenuLinks || {};
-
-  // خيارات التصنيفات للنموذج
-  const catOptions = currentCategories
-    .filter(c => c.id !== 'all')
-    .map(c => `<option value="${c.id}">${c.icon || '📦'} ${c.name}</option>`)
-    .join('');
+  const catOptions = currentCategories.filter(c => c.id !== 'all')
+    .map(c => `<option value="${c.id}">${c.icon || '📦'} ${c.name}</option>`).join('');
 
   content.innerHTML = `
-    <!-- المنتجات -->
-    <div style="background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-      <h3 style="margin-top: 0; color: white;">إضافة / تعديل منتج</h3>
-      <input type="text" id="new-prod-name" placeholder="اسم المنتج" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
-      <textarea id="new-prod-desc" placeholder="وصف المنتج..." style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box; resize: none;"></textarea>
-      <div style="margin-bottom: 8px;">
-        <label for="image-upload" style="display: block; color: #a0c4ff; font-size: 12px; margin-bottom: 5px;">صورة المنتج:</label>
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <input type="file" id="image-upload" accept="image/*" onchange="handleImageUpload(this, 'image-preview')" style="display: none;">
-          <label for="image-upload" style="background: #2a3b5c; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-size: 12px;">اختر صورة</label>
-          <div id="image-preview" style="width: 40px; height: 40px; border-radius: 5px; background: #0d1526; background-size: cover; background-position: center; display: flex; justify-content: center; align-items: center; color: #666; font-size: 10px;">لا توجد</div>
+    <div style="background:#112238;padding:15px;border-radius:10px;margin-bottom:20px;">
+      <h3 style="margin-top:0;color:white;">إضافة / تعديل منتج</h3>
+      <input type="text" id="new-prod-name" placeholder="اسم المنتج" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;box-sizing:border-box;">
+      <textarea id="new-prod-desc" placeholder="وصف المنتج" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;box-sizing:border-box;resize:none;"></textarea>
+      <div style="margin-bottom:8px;">
+        <label for="image-upload" style="display:block;color:#a0c4ff;font-size:12px;margin-bottom:5px;">الصورة:</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <input type="file" id="image-upload" accept="image/*" onchange="handleImageUpload(this,'image-preview')" style="display:none;">
+          <label for="image-upload" style="background:#2a3b5c;color:white;padding:8px 15px;border-radius:5px;cursor:pointer;font-size:12px;">اختر صورة</label>
+          <div id="image-preview" style="width:40px;height:40px;border-radius:5px;background:#0d1526;background-size:cover;background-position:center;display:flex;justify-content:center;align-items:center;color:#666;font-size:10px;">لا توجد</div>
         </div>
       </div>
-      <p style="color: #a0c4ff; font-size: 12px; margin: 5px 0;">الأسعار:</p>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-        <input type="number" id="price-usd" placeholder="دولار $" style="padding: 8px; border-radius: 5px; border: none;">
-        <input type="number" id="price-ton" placeholder="تون TON" style="padding: 8px; border-radius: 5px; border: none;">
-        <input type="number" id="price-stars" placeholder="نجوم ⭐" style="padding: 8px; border-radius: 5px; border: none;">
-        <input type="number" id="price-sar" placeholder="ريال 🇸🇦" style="padding: 8px; border-radius: 5px; border: none;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+        <input type="number" id="price-usd" placeholder="دولار $" style="padding:8px;border-radius:5px;border:none;">
+        <input type="number" id="price-ton" placeholder="TON" style="padding:8px;border-radius:5px;border:none;">
+        <input type="number" id="price-stars" placeholder="نجوم ⭐" style="padding:8px;border-radius:5px;border:none;">
+        <input type="number" id="price-sar" placeholder="ريال 🇸🇦" style="padding:8px;border-radius:5px;border:none;">
       </div>
-      <p style="color: #a0c4ff; font-size: 12px; margin: 5px 0;">التصنيف والشارة:</p>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-        <select id="new-prod-category" style="padding: 8px; border-radius: 5px; border: none;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+        <select id="new-prod-category" style="padding:8px;border-radius:5px;border:none;">
           <option value="all">بدون تصنيف</option>
           ${catOptions}
         </select>
-        <select id="new-prod-badge" style="padding: 8px; border-radius: 5px; border: none;">
+        <select id="new-prod-badge" style="padding:8px;border-radius:5px;border:none;">
           <option value="">بدون شارة</option>
           <option value="new">⚡ جديد</option>
           <option value="featured">⭐ مميز</option>
         </select>
       </div>
-      <input type="number" id="new-prod-discount" placeholder="نسبة الخصم % (اختياري)" style="width: 100%; padding: 8px; margin-bottom: 8px; border-radius: 5px; border: none;" min="0" max="99">
-      <button onclick="addProduct()" id="submit-btn" style="background: #6A0DAD; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">إضافة المنتج</button>
-      <button id="cancel-edit-btn" onclick="openAdminPanel()" style="display: none; background: #e74c3c; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-top: 8px;">إلغاء التعديل</button>
+      <input type="number" id="new-prod-discount" placeholder="نسبة الخصم %" style="width:100%;padding:8px;margin-bottom:8px;border-radius:5px;border:none;" min="0" max="99">
+      <button onclick="addProduct()" id="submit-btn" style="background:#6A0DAD;color:white;padding:12px;width:100%;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">إضافة المنتج</button>
+      <button id="cancel-edit-btn" onclick="openAdminPanel()" style="display:none;background:#e74c3c;color:white;padding:12px;width:100%;border:none;border-radius:5px;cursor:pointer;font-weight:bold;margin-top:8px;">إلغاء التعديل</button>
     </div>
-    <h3 style="color: white;">المنتجات المضافة</h3>
+    <h3 style="color:white;">المنتجات المضافة</h3>
     <div>${productsHTML}</div>
-
     ${userRole === 'owner' || userRole === 'admin' ? renderSectionsAdmin() : ''}
-
     ${userRole === 'owner' || userRole === 'admin' ? renderCategoriesAdmin() : ''}
-
     ${userRole === 'owner' ? `
-      <hr style="border-color: #333; margin: 20px 0;">
-      <div style="background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-        <h3 style="margin-top: 0; color: white;">إضافة صورة للسلايدر</h3>
-        <div style="margin-bottom: 8px;">
-          <label for="slider-upload" style="display: block; color: #a0c4ff; font-size: 12px; margin-bottom: 5px;">الصورة (مطلوبة):</label>
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <input type="file" id="slider-upload" accept="image/*" onchange="handleSliderImageUpload(this)" style="display: none;">
-            <label for="slider-upload" style="background: #2a3b5c; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; font-size: 12px;">اختر صورة</label>
-            <div id="slider-preview" style="width: 80px; height: 40px; border-radius: 5px; background: #0d1526; background-size: cover; background-position: center; display: flex; justify-content: center; align-items: center; color: #666; font-size: 10px;">لا توجد</div>
-          </div>
-        </div>
-        <input type="text" id="slide-title" placeholder="عنوان الصورة (اختياري)" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
-        <input type="text" id="slide-btn-text" placeholder="نص الزر (اختياري)" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
-        <input type="text" id="slide-btn-link" placeholder="#product-123 أو https://..." style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
-        <button onclick="addSlide()" style="background: #4A90E2; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">إضافة الصورة</button>
+      <hr style="border-color:#333;margin:20px 0;">
+      <div style="background:#112238;padding:15px;border-radius:10px;margin-bottom:20px;">
+        <h3 style="margin-top:0;color:white;">إضافة صورة للسلايدر</h3>
+        <input type="file" id="slider-upload" accept="image/*" onchange="handleSliderImageUpload(this)" style="display:none;">
+        <label for="slider-upload" style="background:#2a3b5c;color:white;padding:8px 15px;border-radius:5px;cursor:pointer;font-size:12px;display:inline-block;margin-bottom:8px;">اختر صورة</label>
+        <div id="slider-preview" style="width:80px;height:40px;border-radius:5px;background:#0d1526;background-size:cover;background-position:center;display:flex;justify-content:center;align-items:center;color:#666;font-size:10px;margin-bottom:8px;">لا توجد</div>
+        <input type="text" id="slide-title" placeholder="عنوان" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;box-sizing:border-box;">
+        <input type="text" id="slide-btn-text" placeholder="نص الزر" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;box-sizing:border-box;">
+        <input type="text" id="slide-btn-link" placeholder="#product-123" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;box-sizing:border-box;">
+        <button onclick="addSlide()" style="background:#4A90E2;color:white;padding:12px;width:100%;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">إضافة</button>
       </div>
-      <h3 style="color: white;">صور السلايدر الحالية</h3>
+      <h3 style="color:white;">صور السلايدر</h3>
       <div>${sliderHTML}</div>
-
-      <hr style="border-color: #333; margin: 20px 0;">
-      <div style="background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-        <h3 style="margin-top: 0; color: white;">روابط الأقسام الأربعة (القديمة)</h3>
-        <p style="font-size: 12px; color: #a0c4ff;">ملاحظة: هذه الروابط لم تعد مستخدمة إذا كانت الأقسام الديناميكية مفعّلة.</p>
-        <input type="text" id="link-telegram" value="${store.telegram || ''}" placeholder="رابط قسم تيليجرام" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none;">
-        <input type="text" id="link-nft" value="${store.nft || ''}" placeholder="رابط قسم المقتنيات" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none;">
-        <input type="text" id="link-social" value="${store.social || ''}" placeholder="رابط قسم التواصل" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none;">
-        <input type="text" id="link-games" value="${store.games || ''}" placeholder="رابط قسم الألعاب" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none;">
-        <button onclick="saveMenuLinks()" style="background: #8A2BE2; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">حفظ الروابط</button>
+      <hr style="border-color:#333;margin:20px 0;">
+      <div style="background:#112238;padding:15px;border-radius:10px;margin-bottom:20px;">
+        <h3 style="margin-top:0;color:white;">روابط الأقسام القديمة</h3>
+        <input type="text" id="link-telegram" value="${store.telegram || ''}" placeholder="تيليجرام" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
+        <input type="text" id="link-nft" value="${store.nft || ''}" placeholder="NFT" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
+        <input type="text" id="link-social" value="${store.social || ''}" placeholder="تواصل" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
+        <input type="text" id="link-games" value="${store.games || ''}" placeholder="ألعاب" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
+        <button onclick="saveMenuLinks()" style="background:#8A2BE2;color:white;padding:12px;width:100%;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">حفظ</button>
       </div>
     ` : ''}
-
     ${userRole === 'owner' || userRole === 'admin' ? `
-      <hr style="border-color: #333; margin: 20px 0;">
-      <div style="background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-        <h3 style="margin-top: 0; color: white;">ترقية مستخدم جديد</h3>
-        <input type="text" id="target-id" placeholder="Telegram ID للشخص" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
-        <select id="target-role" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
-          <option value="moderator">مشرف عادي</option>
+      <hr style="border-color:#333;margin:20px 0;">
+      <div style="background:#112238;padding:15px;border-radius:10px;margin-bottom:20px;">
+        <h3 style="margin-top:0;color:white;">ترقية مستخدم</h3>
+        <input type="text" id="target-id" placeholder="Telegram ID" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;box-sizing:border-box;">
+        <select id="target-role" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;box-sizing:border-box;">
+          <option value="moderator">مشرف</option>
           ${userRole === 'owner' ? '<option value="admin">مسؤول</option>' : ''}
         </select>
-        <button onclick="promoteUser()" style="background: #3498db; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer;">ترقية</button>
+        <button onclick="promoteUser()" style="background:#3498db;color:white;padding:12px;width:100%;border:none;border-radius:5px;cursor:pointer;">ترقية</button>
       </div>
-      <h3 style="color: white;">إدارة المشرفين والمسؤولين</h3>
+      <h3 style="color:white;">إدارة المشرفين</h3>
       <div>${staffHTML}</div>
     ` : ''}
   `;
@@ -1053,22 +1015,12 @@ async function addProduct() {
   const category = document.getElementById('new-prod-category')?.value || 'all';
   const badge = document.getElementById('new-prod-badge')?.value || '';
   const discount = parseFloat(document.getElementById('new-prod-discount')?.value) || 0;
-
   if (!name) return alert('أدخل اسم المنتج');
 
-  const res = await apiCall('/api/products/add', {
-    name, description, image: currentBase64Image, prices, category, badge, discount
-  });
-
+  const res = await apiCall('/api/products/add', { name, description, image: currentBase64Image, prices, category, badge, discount });
   if (res.ok) {
     const link = res.link || ('#product-' + res.product.id);
-
-    if (tg && tg.showAlert) {
-      tg.showAlert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + link + '\n\n(اضغط على أي زر/صورة في الأقسام وحط هذا الرابط)');
-    } else {
-      alert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + link);
-    }
-
+    tg.showAlert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + link);
     navigator.clipboard.writeText(link).catch(() => {});
     openAdminPanel();
   } else {
@@ -1091,14 +1043,12 @@ async function editProductForm(id) {
   document.getElementById('price-ton').value = product.prices?.ton || '';
   document.getElementById('price-stars').value = product.prices?.stars || '';
   document.getElementById('price-sar').value = product.prices?.sar || '';
-
   const catSel = document.getElementById('new-prod-category');
   if (catSel) catSel.value = product.category || 'all';
   const badgeSel = document.getElementById('new-prod-badge');
   if (badgeSel) badgeSel.value = product.badge || '';
   const discInp = document.getElementById('new-prod-discount');
   if (discInp) discInp.value = product.discount || '';
-
   const submitBtn = document.getElementById('submit-btn');
   submitBtn.textContent = 'حفظ التعديلات';
   submitBtn.style.background = '#f39c12';
@@ -1119,11 +1069,7 @@ async function saveEdit(id) {
   const category = document.getElementById('new-prod-category')?.value || 'all';
   const badge = document.getElementById('new-prod-badge')?.value || '';
   const discount = parseFloat(document.getElementById('new-prod-discount')?.value) || 0;
-
-  const res = await apiCall('/api/products/edit', {
-    productId: id, name, description, image: currentBase64Image, prices,
-    category, badge, discount
-  });
+  const res = await apiCall('/api/products/edit', { productId: id, name, description, image: currentBase64Image, prices, category, badge, discount });
   if(res.ok) { tg.showAlert('تم التعديل ✅'); openAdminPanel(); } else { tg.showAlert(res.error); }
 }
 
@@ -1142,39 +1088,21 @@ async function promoteUser() {
 }
 
 async function updateRole(targetId, newRole) {
-  if(!confirm(`تعديل الرتبة؟`)) return;
+  if(!confirm('تعديل الرتبة؟')) return;
   const res = await apiCall('/api/users/update-role', { targetId, newRole });
   if(res.ok) { tg.showAlert('تم التحديث ✅'); openAdminPanel(); } else { tg.showAlert(res.error); }
 }
 
-document.getElementById('close-admin').addEventListener('click', () => {
-  document.getElementById('page-admin').classList.remove('active');
-  document.getElementById('page-empty').classList.add('active');
-});
-
-function returnToNav() {
-  document.getElementById('page-empty').classList.remove('active');
-  document.getElementById('page-home').classList.add('active');
-  document.getElementById('page-nav').classList.add('active');
-}
-
 /* ============================================================
-   ✅✅✅  صفحة المتجر الاحترافية  ✅✅✅
+   صفحة المتجر
    ============================================================ */
-
-let currentShopProducts = [];
-let shopState = {
-  search: '',
-  category: 'all',
-  sort: 'newest'
-};
-
 async function openShop() {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-shop').classList.add('active');
-  document.getElementById('page-nav').classList.add('active');
+  safeAddActive('page-shop');
+  safeAddActive('page-nav');
 
   const content = document.getElementById('shop-content');
+  if (!content) return;
   content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
 
   const [productsRes, catsRes] = await Promise.all([
@@ -1182,15 +1110,9 @@ async function openShop() {
     apiCall('/api/categories')
   ]);
 
-  if (catsRes.ok && Array.isArray(catsRes.categories)) {
-    currentCategories = catsRes.categories;
-  }
-
-  if (productsRes.ok && Array.isArray(productsRes.products)) {
-    currentShopProducts = productsRes.products;
-  } else {
-    currentShopProducts = [];
-  }
+  if (catsRes.ok && Array.isArray(catsRes.categories)) currentCategories = catsRes.categories;
+  if (productsRes.ok && Array.isArray(productsRes.products)) currentShopProducts = productsRes.products;
+  else currentShopProducts = [];
 
   shopState = { search: '', category: 'all', sort: 'newest' };
   const searchInput = document.getElementById('shop-search-input');
@@ -1207,12 +1129,9 @@ async function openShop() {
 function renderCategoriesBar() {
   const bar = document.getElementById('shop-categories');
   if (!bar) return;
-
   bar.innerHTML = '';
-
   const allCat = currentCategories.find(c => c.id === 'all') || { id: 'all', name: 'الكل', icon: '🛍️' };
   const allCats = [allCat, ...currentCategories.filter(c => c.id !== 'all')];
-
   allCats.forEach(cat => {
     const chip = document.createElement('div');
     chip.className = 'cat-chip' + (shopState.category === cat.id ? ' active' : '');
@@ -1249,18 +1168,15 @@ function onShopSort(val) {
 
 function applyShopFilters() {
   let list = [...currentShopProducts];
-
   if (shopState.category && shopState.category !== 'all') {
     list = list.filter(p => p.category === shopState.category);
   }
-
   if (shopState.search) {
     list = list.filter(p =>
       (p.name || '').toLowerCase().includes(shopState.search) ||
       (p.description || '').toLowerCase().includes(shopState.search)
     );
   }
-
   if (shopState.sort === 'newest') {
     list.sort((a, b) => {
       const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -1274,7 +1190,6 @@ function applyShopFilters() {
   } else if (shopState.sort === 'popular') {
     list.sort((a, b) => (b.soldCount || 0) - (a.soldCount || 0));
   }
-
   renderShopProducts(list);
   const countEl = document.getElementById('shop-results-count');
   if (countEl) countEl.textContent = `${list.length} منتج`;
@@ -1282,70 +1197,39 @@ function applyShopFilters() {
 
 function renderShopProducts(products) {
   const content = document.getElementById('shop-content');
-
+  if (!content) return;
   if (!products || products.length === 0) {
     content.innerHTML = '<div class="shop-empty">لا توجد منتجات مطابقة 🔍</div>';
     return;
   }
-
   const grid = document.createElement('div');
   grid.className = 'shop-grid';
-
-  products.forEach(p => {
-    const card = document.createElement('div');
-function renderShopProducts(products) {
-  const content = document.getElementById('shop-content');
-
-  if (!products || products.length === 0) {
-    content.innerHTML = '<div class="shop-empty">لا توجد منتجات مطابقة 🔍</div>';
-    return;
-  }
-
-  const grid = document.createElement('div');
-  grid.className = 'shop-grid';
-
   products.forEach(p => {
     const card = document.createElement('div');
     card.className = 'shop-card';
     card.onclick = () => openProduct(p.id);
-
-    // شارة
     let badgeHTML = '';
-    if (p.discount > 0) {
-      badgeHTML = `<div class="card-badge discount">🔥 -${p.discount}%</div>`;
-    } else if (p.badge === 'new') {
-      badgeHTML = `<div class="card-badge new">⚡ جديد</div>`;
-    } else if (p.badge === 'featured') {
-      badgeHTML = `<div class="card-badge featured">⭐ مميز</div>`;
-    }
-
+    if (p.discount > 0) badgeHTML = `<div class="card-badge discount">🔥 -${p.discount}%</div>`;
+    else if (p.badge === 'new') badgeHTML = `<div class="card-badge new">⚡ جديد</div>`;
+    else if (p.badge === 'featured') badgeHTML = `<div class="card-badge featured">⭐ مميز</div>`;
     const pricesStr = formatPrices(p.prices);
-    const oldPriceStr = p.discount > 0 && p.prices?.usd > 0
-      ? `<span class="card-old-price">$${(p.prices.usd / (1 - p.discount/100)).toFixed(1)}</span>`
-      : '';
-
     const catName = currentCategories.find(c => c.id === p.category)?.name || '';
-
     card.innerHTML = `
       <div class="card-img-wrap">
         ${badgeHTML}
-        ${p.image
-          ? `<img src="${p.image}" class="card-img" alt="">`
-          : `<div class="card-img-placeholder">📦</div>`}
+        ${p.image ? `<img src="${p.image}" class="card-img" alt="">` : `<div class="card-img-placeholder">📦</div>`}
       </div>
       <div class="card-body">
         <strong>${p.name || 'بدون اسم'}</strong>
         <small>${p.description || ''}</small>
         <div class="card-price-row">
           <span class="card-price">${pricesStr || '—'}</span>
-          ${oldPriceStr}
           ${catName ? `<span class="card-cat">${catName}</span>` : ''}
         </div>
       </div>
     `;
     grid.appendChild(card);
   });
-
   content.innerHTML = '';
   content.appendChild(grid);
 }
@@ -1361,9 +1245,8 @@ function formatPrices(prices) {
 }
 
 /* ============================================================
-   صفحة المنتج المفرد
+   صفحة المنتج
    ============================================================ */
-
 async function openProduct(productId) {
   window.location.hash = '#product-' + productId;
   await loadProductPage(productId);
@@ -1371,19 +1254,18 @@ async function openProduct(productId) {
 
 async function loadProductPage(productId) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-product').classList.add('active');
-  document.getElementById('page-nav').classList.add('active');
+  safeAddActive('page-product');
+  safeAddActive('page-nav');
 
   const content = document.getElementById('product-content');
+  if (!content) return;
   content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
 
   let product = currentShopProducts.find(p => p.id === productId);
-
   if (!product) {
     const res = await apiCall('/api/products/get', { productId });
     if (res.ok && res.product) product = res.product;
   }
-
   if (!product) {
     content.innerHTML = '<div class="shop-empty">❌ المنتج غير موجود</div>';
     return;
@@ -1391,36 +1273,26 @@ async function loadProductPage(productId) {
 
   const pricesStr = formatPrices(product.prices);
   const catName = currentCategories.find(c => c.id === product.category)?.name || '';
-
   let badgeHTML = '';
-  if (product.discount > 0) {
-    badgeHTML = `<span class="card-badge discount" style="position:static;display:inline-block;margin-bottom:8px;">🔥 خصم ${product.discount}%</span>`;
-  } else if (product.badge === 'new') {
-    badgeHTML = `<span class="card-badge new" style="position:static;display:inline-block;margin-bottom:8px;">⚡ جديد</span>`;
-  } else if (product.badge === 'featured') {
-    badgeHTML = `<span class="card-badge featured" style="position:static;display:inline-block;margin-bottom:8px;">⭐ مميز</span>`;
-  }
+  if (product.discount > 0) badgeHTML = `<span class="card-badge discount" style="position:static;display:inline-block;margin-bottom:8px;">🔥 خصم ${product.discount}%</span>`;
+  else if (product.badge === 'new') badgeHTML = `<span class="card-badge new" style="position:static;display:inline-block;margin-bottom:8px;">⚡ جديد</span>`;
+  else if (product.badge === 'featured') badgeHTML = `<span class="card-badge featured" style="position:static;display:inline-block;margin-bottom:8px;">⭐ مميز</span>`;
 
   content.innerHTML = `
     <div class="product-hero">
-      ${product.image
-        ? `<img src="${product.image}" alt="">`
-        : `<div class="hero-placeholder">📦</div>`}
+      ${product.image ? `<img src="${product.image}" alt="">` : `<div class="hero-placeholder">📦</div>`}
     </div>
-
     <div class="product-info">
       ${badgeHTML}
       <h2>${product.name || 'بدون اسم'}</h2>
       ${catName ? `<div style="color:#8A2BE2;font-size:12px;margin-bottom:8px;">🏷️ ${catName}</div>` : ''}
       ${product.description ? `<p>${product.description}</p>` : ''}
-      ${pricesStr
-        ? `<div class="product-prices">
+      ${pricesStr ? `<div class="product-prices">
              ${product.prices.usd > 0 ? `<span class="price-chip">دولار: <strong>$${product.prices.usd}</strong></span>` : ''}
              ${product.prices.ton > 0 ? `<span class="price-chip">TON: <strong>${product.prices.ton}</strong></span>` : ''}
              ${product.prices.stars > 0 ? `<span class="price-chip">نجوم: <strong>${product.prices.stars}</strong></span>` : ''}
              ${product.prices.sar > 0 ? `<span class="price-chip">ريال: <strong>${product.prices.sar}</strong></span>` : ''}
-           </div>`
-        : ''}
+           </div>` : ''}
       <button class="product-buy-btn" onclick="buyProduct('${product.id}')">🛒 اطلب الآن</button>
       <button class="product-share-btn" onclick="copyProductLink('${product.id}')">🔗 نسخ رابط المنتج</button>
     </div>
@@ -1428,7 +1300,6 @@ async function loadProductPage(productId) {
 }
 
 function buyProduct(productId) {
-  // ✅ يفتح صفحة المنتج داخلياً + يزيد عداد المبيعات
   apiCall('/api/products/increment-sold', { productId }).catch(() => {});
   window.location.hash = '#product-' + productId;
 }
@@ -1436,9 +1307,8 @@ function buyProduct(productId) {
 function copyProductLink(productId) {
   const product = currentShopProducts.find(p => p.id === productId);
   const internalLink = product?.link || ('#product-' + productId);
-
   navigator.clipboard.writeText(internalLink).then(() => {
-    if (tg && tg.showAlert) tg.showAlert('تم نسخ رابط المنتج ✅\n\n' + internalLink + '\n\n(يفتح المنتج داخل التطبيق)');
+    if (tg && tg.showAlert) tg.showAlert('تم نسخ رابط المنتج ✅\n\n' + internalLink);
     else alert('تم نسخ الرابط:\n' + internalLink);
   }).catch(() => {
     if (tg && tg.showAlert) tg.showAlert('الرابط: ' + internalLink);
@@ -1449,9 +1319,8 @@ function copyProductLink(productId) {
 function copyProductLinkFromAdmin(productId) {
   const product = currentShopProducts.find(p => p.id === productId);
   const internalLink = product?.link || ('#product-' + productId);
-
   navigator.clipboard.writeText(internalLink).then(() => {
-    if (tg && tg.showAlert) tg.showAlert('تم نسخ رابط المنتج ✅\n\n' + internalLink + '\n\n(يفتح المنتج داخل التطبيق)');
+    if (tg && tg.showAlert) tg.showAlert('تم نسخ رابط المنتج ✅\n\n' + internalLink);
     else alert('تم نسخ الرابط:\n' + internalLink);
   }).catch(() => {
     if (tg && tg.showAlert) tg.showAlert('الرابط:\n' + internalLink);
@@ -1462,18 +1331,16 @@ function copyProductLinkFromAdmin(productId) {
 function goHome() {
   window.location.hash = '';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-home').classList.add('active');
-  document.getElementById('page-nav').classList.add('active');
+  safeAddActive('page-home');
+  safeAddActive('page-nav');
 }
 
 /* ============================================================
-   ✅ مستمع الـ hash (يفتح المنتج داخل التطبيق)
+   مستمع الـ hash
    ============================================================ */
-
 async function handleHashChange() {
   const hash = window.location.hash.replace('#', '');
   if (!hash) return;
-
   if (hash.startsWith('product-')) {
     const productId = hash.replace('product-', '');
     if (currentShopProducts.length === 0) {
@@ -1491,4 +1358,21 @@ window.addEventListener('hashchange', handleHashChange);
 
 setTimeout(() => {
   if (window.location.hash) handleHashChange();
-}, 1500);     
+}, 1500);
+
+/* ============================================================
+   إغلاق لوحة التحكم
+   ============================================================ */
+const closeAdminBtn = document.getElementById('close-admin');
+if (closeAdminBtn) {
+  closeAdminBtn.addEventListener('click', () => {
+    safeRemoveActive('page-admin');
+    safeAddActive('page-empty');
+  });
+}
+
+function returnToNav() {
+  safeRemoveActive('page-empty');
+  safeAddActive('page-home');
+  safeAddActive('page-nav');
+}
