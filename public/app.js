@@ -995,3 +995,363 @@ function returnToNav() {
   document.getElementById('page-home').classList.add('active');
   document.getElementById('page-nav').classList.add('active');
 }
+/* ============================================================
+   ✅✅✅  نظام رابط المنتج + صفحة المتجر + صفحة المنتج  ✅✅✅
+   ============================================================ */
+
+let currentShopProducts = [];
+
+/* فتح صفحة المتجر */
+async function openShop() {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-shop').classList.add('active');
+  document.getElementById('page-nav').classList.add('active');
+
+  const content = document.getElementById('shop-content');
+  content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
+
+  const data = await apiCall('/api/products');
+  if (!data.ok || !data.products || data.products.length === 0) {
+    content.innerHTML = '<div class="shop-empty">لا توجد منتجات بعد 🛍️</div>';
+    return;
+  }
+
+  currentShopProducts = data.products;
+  renderShopProducts(data.products);
+}
+
+function renderShopProducts(products) {
+  const content = document.getElementById('shop-content');
+  const sorted = [...products].sort((a, b) => {
+    const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return db - da; // الأحدث أولاً
+  });
+
+  const grid = document.createElement('div');
+  grid.className = 'shop-grid';
+
+  sorted.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'shop-card';
+    card.onclick = () => openProduct(p.id);
+
+    const pricesStr = formatPrices(p.prices);
+
+    card.innerHTML = `
+      ${p.image
+        ? `<img src="${p.image}" class="card-img" alt="">`
+        : `<div class="card-img-placeholder">📦</div>`}
+      <div class="card-body">
+        <strong>${p.name || 'بدون اسم'}</strong>
+        <small>${p.description || ''}</small>
+        <div class="card-price">${pricesStr || '—'}</div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+
+  content.innerHTML = '';
+  content.appendChild(grid);
+}
+
+function formatPrices(prices) {
+  if (!prices) return '';
+  const parts = [];
+  if (prices.usd > 0) parts.push(`$${prices.usd}`);
+  if (prices.ton > 0) parts.push(`💎 ${prices.ton}`);
+  if (prices.stars > 0) parts.push(`⭐ ${prices.stars}`);
+  if (prices.sar > 0) parts.push(`🇸🇦 ${prices.sar}`);
+  return parts.join(' | ');
+}
+
+/* فتح صفحة منتج مفرد */
+async function openProduct(productId) {
+  window.location.hash = '#product-' + productId;
+  await loadProductPage(productId);
+}
+
+async function loadProductPage(productId) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-product').classList.add('active');
+  document.getElementById('page-nav').classList.add('active');
+
+  const content = document.getElementById('product-content');
+  content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
+
+    // جرّب تجيبه من الكاش أولاً
+  let product = currentShopProducts.find(p => p.id === productId);
+
+  if (!product) {
+    // اطلبه من السيرفر
+    const res = await apiCall('/api/products/get', { productId });
+    if (res.ok && res.product) product = res.product;
+  }
+
+  if (!product) {
+    content.innerHTML = '<div class="shop-empty">❌ المنتج غير موجود</div>';
+    return;
+  }
+
+  const pricesStr = formatPrices(product.prices);
+  const shareLink = '#' + (product.slug || 'product-' + product.id);
+
+  content.innerHTML = `
+    <div class="product-hero">
+      ${product.image
+        ? `<img src="${product.image}" alt="">`
+        : `<div class="hero-placeholder">📦</div>`}
+    </div>
+
+    <div class="product-info">
+      <h2>${product.name || 'بدون اسم'}</h2>
+      ${product.description ? `<p>${product.description}</p>` : ''}
+      ${pricesStr
+        ? `<div class="product-prices">
+             ${product.prices.usd > 0 ? `<span class="price-chip">دولار: <strong>$${product.prices.usd}</strong></span>` : ''}
+             ${product.prices.ton > 0 ? `<span class="price-chip">TON: <strong>${product.prices.ton}</strong></span>` : ''}
+             ${product.prices.stars > 0 ? `<span class="price-chip">نجوم: <strong>${product.prices.stars}</strong></span>` : ''}
+             ${product.prices.sar > 0 ? `<span class="price-chip">ريال: <strong>${product.prices.sar}</strong></span>` : ''}
+           </div>`
+        : ''}
+      <button class="product-buy-btn" onclick="buyProduct('${product.id}')">🛒 اطلب الآن</button>
+      <button class="product-share-btn" onclick="copyProductLink('${product.id}')">🔗 نسخ رابط المنتج</button>
+    </div>
+  `;
+}
+
+/* زر الشراء (يفتح محادثة البوت أو ينسخ الرابط) */
+function buyProduct(productId) {
+  const product = currentShopProducts.find(p => p.id === productId);
+  const link = product?.link || ('#product-' + productId);
+  const shareUrl = window.location.origin + window.location.pathname + link;
+
+  if (tg && tg.showPopup) {
+    tg.showPopup({
+      title: 'اطلب المنتج',
+      message: 'هل تريد نسخ رابط المنتج للمشاركة أو إرساله للمتجر؟',
+      buttons: [
+        { id: 'copy', type: 'default', text: '📋 نسخ الرابط' },
+        { id: 'cancel', type: 'cancel', text: 'إلغاء' }
+      ]
+    }, (btnId) => {
+      if (btnId === 'copy') {
+        navigator.clipboard.writeText(shareUrl).then(() => {
+          tg.showAlert('تم نسخ الرابط ✅');
+        }).catch(() => {
+          tg.showAlert('تعذر النسخ، الرابط: ' + shareUrl);
+        });
+      }
+    });
+  } else {
+    navigator.clipboard.writeText(shareUrl).then(() => alert('تم نسخ الرابط ✅'));
+  }
+}
+
+/* نسخ رابط المنتج */
+function copyProductLink(productId) {
+  const product = currentShopProducts.find(p => p.id === productId);
+  const link = product?.link || ('#product-' + productId);
+  const shareUrl = window.location.origin + window.location.pathname + link;
+
+  navigator.clipboard.writeText(shareUrl).then(() => {
+    if (tg && tg.showAlert) tg.showAlert('تم نسخ الرابط ✅');
+    else alert('تم نسخ الرابط ✅');
+  }).catch(() => {
+    if (tg && tg.showAlert) tg.showAlert('الرابط: ' + shareUrl);
+    else alert('الرابط: ' + shareUrl);
+  });
+}
+
+/* الرجوع للرئيسية */
+function goHome() {
+  window.location.hash = '';
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-home').classList.add('active');
+  document.getElementById('page-nav').classList.add('active');
+}
+
+/* ============================================================
+   ✅ مستمع تغيير الـ hash (يفتح المنتج من أي رابط #product-xxx)
+   ============================================================ */
+async function handleHashChange() {
+  const hash = window.location.hash.replace('#', '');
+  if (!hash) return;
+
+  if (hash.startsWith('product-')) {
+    const productId = hash.replace('product-', '');
+    // تأكد من تحميل المنتجات أولاً
+    if (currentShopProducts.length === 0) {
+      const data = await apiCall('/api/products');
+      if (data.ok && data.products) currentShopProducts = data.products;
+    }
+    await loadProductPage(productId);
+  }
+}
+
+// استمع لتغيّر الـ hash
+window.addEventListener('hashchange', handleHashChange);
+
+// عند التحميل الأول، إذا فيه hash، افتح المنتج
+setTimeout(() => {
+  if (window.location.hash) handleHashChange();
+}, 1500);
+
+/* ============================================================
+   ✅ زر المتجر بدل الجرس + تحديث openAdminPanel لعرض رابط المنتج
+   ============================================================ */
+
+// استبدال أيقونة bell بـ shop في الشريط السفلي
+// (عدّل الدالة initNav1 — استبدل السطر tabs فقط)
+//
+// في initNav1، غيّر:
+//   let tabs = [{key:'home'},{key:'heart'},{key:'cart'},{key:'headset'},{key:'bell'}];
+// إلى:
+//   let tabs = [{key:'home'},{key:'heart'},{key:'cart'},{key:'headset'},{key:'shop'}];
+//
+// وأضف في switch:
+//   else if (currentTabs[i].key === 'shop') { openShop(); }
+
+/* إعادة تعريف initNav1 مع زر المتجر */
+const originalInitNav1 = initNav1;
+initNav1 = function() {
+  const nav1 = document.getElementById('nav1');
+  nav1.innerHTML = '';
+  let tabs = [{key:'home'},{key:'heart'},{key:'cart'},{key:'headset'},{key:'shop'}];
+  if (userRole !== 'user') tabs.push({key:'admin'});
+
+  const indicator = document.createElement('span'); indicator.className = 'active-indicator';
+  const spotlight = document.createElement('span'); spotlight.className = 'spotlight';
+
+  // أيقونة المتجر
+  const shopIcon = '<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>';
+  if (!icons.shop) icons.shop = shopIcon;
+
+  tabs.forEach((tab, i) => {
+    const b = document.createElement('button');
+    b.className = 'nav-item';
+    b.innerHTML = `<span class="icon">${svg(tab.key, 26)}</span>`;
+    b.addEventListener('click', () => setNav1(i, tabs));
+    nav1.append(b);
+  });
+
+  nav1.append(indicator, spotlight);
+
+  function setNav1(i, currentTabs) {
+    nav1.querySelectorAll('.nav-item').forEach((b, j) => {
+      b.classList.toggle('active', i === j);
+      b.querySelector('.icon').classList.toggle('active-icon', i === j);
+    });
+    const item = nav1.querySelectorAll('.nav-item')[i];
+    const left = item.offsetLeft + item.offsetWidth / 2;
+    indicator.style.left = left + 'px';
+    spotlight.style.left = left + 'px';
+
+    const key = currentTabs[i].key;
+    if (key === 'admin') {
+      openAdminPanel();
+    } else if (key === 'shop') {
+      openShop();
+    } else if (key === 'home') {
+      window.location.hash = '';
+      document.getElementById('page-admin').classList.remove('active');
+      document.getElementById('page-empty').classList.remove('active');
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-home').classList.add('active');
+      document.getElementById('page-nav').classList.add('active');
+    } else {
+      // heart / cart / headset — مؤقتاً الرئيسية
+      document.getElementById('page-admin').classList.remove('active');
+      document.getElementById('page-empty').classList.remove('active');
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-home').classList.add('active');
+      document.getElementById('page-nav').classList.add('active');
+    }
+  }
+  setTimeout(() => setNav1(0, tabs), 50);
+  nav1Initialized = true;
+};
+
+// إعادة تفعيل الشريط بعد الاستبدال
+if (nav1Initialized) initNav1();
+
+/* ============================================================
+   ✅ إضافة عرض رابط المنتج في لوحة التحكم
+   ============================================================ */
+// في openAdminPanel، بعد إضافة منتج بنجاح، نعرض الرابط.
+// عدّل دالة addProduct لتكون:
+
+const originalAddProduct = addProduct;
+addProduct = async function() {
+  const name = document.getElementById('new-prod-name').value;
+  const description = document.getElementById('new-prod-desc').value;
+  const prices = {
+    usd: parseFloat(document.getElementById('price-usd').value) || 0,
+    ton: parseFloat(document.getElementById('price-ton').value) || 0,
+    stars: parseFloat(document.getElementById('price-stars').value) || 0,
+    sar: parseFloat(document.getElementById('price-sar').value) || 0
+  };
+  if (!name) return alert('أدخل اسم المنتج');
+
+  const res = await apiCall('/api/products/add', {
+    name, description, image: currentBase64Image, prices
+  });
+
+  if (res.ok) {
+    // إظهار الرابط
+    const link = res.link || ('#product-' + res.product.id);
+    const fullUrl = window.location.origin + window.location.pathname + link;
+
+    if (tg && tg.showAlert) {
+      tg.showAlert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + fullUrl);
+    } else {
+      alert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + fullUrl);
+    }
+
+    // نسخ الرابط تلقائياً
+    navigator.clipboard.writeText(fullUrl).catch(() => {});
+
+    openAdminPanel();
+  } else {
+    tg.showAlert(res.error || 'فشل الإضافة');
+  }
+};
+
+// تحديث قائمة المنتجات في لوحة التحكم لتظهر الرابط مع كل منتج
+// (هذا يتم داخل openAdminPanel — استبدل قسم productsHTML)
+
+const originalOpenAdminPanel = openAdminPanel;
+openAdminPanel = async function() {
+  // استدعِ الأصلية
+  await originalOpenAdminPanel();
+
+  // بعد الرسم، أضف روابط المنتجات لكل منتج
+  const products = await apiCall('/api/products');
+  if (!products.ok || !products.products) return;
+
+  // ابحث عن كل بطاقة منتج في لوحة التحكم وأضف الرابط
+  // (هذا سيتم عبر إعادة رسم بطاقات المنتجات بالروابط)
+  // نستخدم طريقة أسهل: نضيف زر "نسخ الرابط" بجانب كل منتج
+  // لكن هذا يتطلب تعديل productsHTML — نفعله في الإصدار القادم
+
+  // حالياً: فقط تأكد أن منتجات المتجر محدّثة
+  currentShopProducts = products.products;
+};
+
+/* ============================================================
+   ✅ إضافة زر "نسخ رابط المنتج" لكل منتج في لوحة التحكم
+   ============================================================ */
+// هذه الدالة تُستدعى من بطاقات المنتجات في لوحة التحكم
+function copyProductLinkFromAdmin(productId) {
+  const product = currentShopProducts.find(p => p.id === productId);
+  const link = product?.link || ('#product-' + productId);
+  const fullUrl = window.location.origin + window.location.pathname + link;
+
+  navigator.clipboard.writeText(fullUrl).then(() => {
+    if (tg && tg.showAlert) tg.showAlert('تم نسخ رابط المنتج ✅\n\n' + fullUrl);
+    else alert('تم نسخ الرابط:\n' + fullUrl);
+  }).catch(() => {
+    if (tg && tg.showAlert) tg.showAlert('الرابط:\n' + fullUrl);
+    else alert('الرابط:\n' + fullUrl);
+  });
+}
