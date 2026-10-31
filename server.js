@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 
-const BOT_TOKEN = '8944449366:AAF-2I10o__647D8eAxlatu_pipO1n8KCW4';
+const BOT_TOKEN = '9223595013:AAG-_2pU6IuxDxcvty7K1OFg9HmSncaaTno';
 const MONGODB_URI = process.env.MONGODB_URI;
 
 const client = new MongoClient(MONGODB_URI, {
