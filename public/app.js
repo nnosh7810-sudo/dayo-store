@@ -1,5 +1,5 @@
 /* ============================================================
-   DAYO STORE — app.js (نسخة كاملة: القديم + نظام الأقسام الديناميكي)
+   DAYO STORE — app.js (نسخة كاملة نهائية)
    ============================================================ */
 
 const tg = window.Telegram?.WebApp;
@@ -15,13 +15,11 @@ let sliderInterval = null;
 let currentSlideIndex = 0;
 let storeMenuLinks = {};
 
-/* ====== متغيرات نظام الأقسام الديناميكي ====== */
-let dynamicSections = [];        // الأقسام المحمّلة من السيرفر
-let editingSectionId = null;     // null = إضافة جديدة، وإلا = تعديل
-let sectionImageBuffer = "";     // صورة القسم (Base64)
-let sectionItemsBuffer = [];     // عناصر القسم (للشبكة/المنتجات)
+let dynamicSections = [];
+let editingSectionId = null;
+let sectionImageBuffer = "";
+let sectionItemsBuffer = [];
 
-/* أنواع الأقسام المدعومة */
 const SECTION_TYPES = {
   grid:     { label: 'شبكة أيقونات (4 أزرار)', color: '#4A90E2' },
   text:     { label: 'قسم نصي',                 color: '#8A2BE2' },
@@ -35,7 +33,6 @@ document.getElementById('page-admin').classList.remove('active');
 document.getElementById('page-empty').classList.remove('active');
 document.getElementById('page-truck').classList.add('active');
 
-/* ====== API ====== */
 async function apiCall(endpoint, body = {}) {
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -101,16 +98,50 @@ const icons = {
   heart:'<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/>',
   cart:'<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>',
   headset:'<path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>',
-  bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+  shop:'<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>',
   admin:'<path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm1-13h-2v6h2zm0 8h-2v2h2z"/>'
 };
 const svg=(name,size=24,stroke=2)=>`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${icons[name]}</svg>`;
 
-/* ====== الشريط السفلي ====== */
+/* ============================================================
+   ✅✅✅  دالة معالجة الروابط (داخل التطبيق)  ✅✅✅
+   ============================================================ */
+
+/* استخرج الـ hash من أي رابط */
+function extractHash(link) {
+  if (!link) return '';
+  const idx = link.indexOf('#');
+  if (idx !== -1) return link.substring(idx);
+  return '';
+}
+
+/* معالج الروابط: داخلي أولاً، خارجي ثانياً */
+function handleInternalLink(link) {
+  if (!link) return;
+
+  // 1) إذا فيه hash (#product-123 أو #page-admin) → افتحه داخل التطبيق
+  const hash = extractHash(link);
+  if (hash) {
+    window.location.hash = hash;
+    return;
+  }
+
+  // 2) إذا رابط خارجي حقيقي → افتحه في المتصفح
+  if (link.startsWith('http')) {
+    window.open(link, '_blank');
+    return;
+  }
+
+  // 3) إذا معرف عنصر داخلي (زي "page-admin")
+  const el = document.getElementById(link);
+  if (el) el.scrollIntoView({ behavior: 'smooth' });
+}
+
+/* ====== الشريط السفلي (زر المتجر بدل الجرس) ====== */
 function initNav1() {
   const nav1 = document.getElementById('nav1');
   nav1.innerHTML = '';
-  let tabs = [{key:'home'},{key:'heart'},{key:'cart'},{key:'headset'},{key:'bell'}];
+  let tabs = [{key:'home'},{key:'heart'},{key:'cart'},{key:'headset'},{key:'shop'}];
   if (userRole !== 'user') tabs.push({key:'admin'});
 
   const indicator = document.createElement('span'); indicator.className = 'active-indicator';
@@ -136,12 +167,24 @@ function initNav1() {
     indicator.style.left = left + 'px';
     spotlight.style.left = left + 'px';
 
-    if (currentTabs[i].key === 'admin') {
+    const key = currentTabs[i].key;
+    if (key === 'admin') {
       openAdminPanel();
+    } else if (key === 'shop') {
+      openShop();
+    } else if (key === 'home') {
+      window.location.hash = '';
+      document.getElementById('page-admin').classList.remove('active');
+      document.getElementById('page-empty').classList.remove('active');
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-home').classList.add('active');
+      document.getElementById('page-nav').classList.add('active');
     } else {
       document.getElementById('page-admin').classList.remove('active');
       document.getElementById('page-empty').classList.remove('active');
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       document.getElementById('page-home').classList.add('active');
+      document.getElementById('page-nav').classList.add('active');
     }
   }
   setTimeout(() => setNav1(0, tabs), 50);
@@ -155,15 +198,12 @@ async function loadStoreData() {
     document.getElementById('store-name').textContent = data.store.name;
     document.getElementById('store-users').textContent = (data.store.usersCount || 0).toLocaleString();
     document.getElementById('store-online').textContent = (data.store.onlineCount || 0).toLocaleString();
-
     if (data.store.logo) {
       const logoEl = document.getElementById('store-logo');
       logoEl.style.backgroundImage = `url('${data.store.logo}')`;
       logoEl.innerText = '';
     }
-
     storeMenuLinks = data.store.menuLinks || {};
-
     if (userRole === 'owner') {
       document.getElementById('edit-cover-btn').style.display = 'block';
       document.getElementById('edit-logo-btn').style.display = 'block';
@@ -224,7 +264,8 @@ function renderSlider(slides) {
     contentHTML += `<span class="slide-badge">👑 عروض خاصة</span>`;
     if (slide.title) contentHTML += `<h3 class="slide-title">${slide.title}</h3>`;
     if (slide.btnText && slide.btnLink) {
-      contentHTML += `<a href="${slide.btnLink}" target="_blank" class="slide-btn">${slide.btnText} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></a>`;
+      // ✅ زر السلايدر يفتح داخلياً
+      contentHTML += `<a href="javascript:void(0)" onclick="handleInternalLink('${slide.btnLink.replace(/'/g, "\\'")}')" class="slide-btn">${slide.btnText} <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></a>`;
     }
     contentHTML += `</div>`;
     slideDiv.innerHTML = contentHTML;
@@ -341,10 +382,9 @@ async function handleImageUpload(input, previewId) {
 }
 
 /* ============================================================
-   ✅✅✅  نظام الأقسام الديناميكي  ✅✅✅
+   نظام الأقسام الديناميكي
    ============================================================ */
 
-/* جلب الأقسام من السيرفر */
 async function loadDynamicSections() {
   const data = await apiCall('/api/sections');
   if (data.ok && Array.isArray(data.sections)) {
@@ -353,7 +393,6 @@ async function loadDynamicSections() {
   }
 }
 
-/* رسم الأقسام على الصفحة الرئيسية */
 function renderDynamicSections() {
   const container = document.getElementById('dynamic-sections-container');
   if (!container) return;
@@ -373,6 +412,8 @@ function renderDynamicSections() {
     el.className = 'dynamic-section';
     el.id = `section-${sec.id}`;
 
+    const safeBtnLink = (sec.buttonLink || '').replace(/'/g, "\\'");
+
     if (sec.type === 'grid') {
       el.innerHTML = sec.title ? `<h2>${sec.title}</h2>` : '';
       const grid = document.createElement('div');
@@ -380,7 +421,8 @@ function renderDynamicSections() {
       (sec.items || []).forEach(item => {
         const itemDiv = document.createElement('div');
         itemDiv.className = 'grid-item';
-        itemDiv.onclick = () => handleSectionItemClick(item);
+        // ✅ يفتح داخلياً
+        itemDiv.onclick = () => handleInternalLink(item.link);
         const iconHTML = item.image
           ? `<img src="${item.image}" alt="">`
           : `<span>${item.icon || '📦'}</span>`;
@@ -397,7 +439,7 @@ function renderDynamicSections() {
         ${sec.image ? `<img src="${sec.image}" alt="">` : ''}
         ${sec.title ? `<h2>${sec.title}</h2>` : ''}
         ${sec.content ? `<p>${sec.content}</p>` : ''}
-        ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="${sec.buttonLink}" target="_blank">${sec.buttonText}</a>` : ''}
+        ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="javascript:void(0)" onclick="handleInternalLink('${safeBtnLink}')">${sec.buttonText}</a>` : ''}
       `;
 
     } else if (sec.type === 'image') {
@@ -405,7 +447,7 @@ function renderDynamicSections() {
         ${sec.title ? `<h2>${sec.title}</h2>` : ''}
         ${sec.image ? `<img src="${sec.image}" alt="">` : ''}
         ${sec.content ? `<p>${sec.content}</p>` : ''}
-        ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="${sec.buttonLink}" target="_blank">${sec.buttonText}</a>` : ''}
+        ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="javascript:void(0)" onclick="handleInternalLink('${safeBtnLink}')">${sec.buttonText}</a>` : ''}
       `;
 
     } else if (sec.type === 'products') {
@@ -415,6 +457,8 @@ function renderDynamicSections() {
       (sec.items || []).forEach(item => {
         const card = document.createElement('div');
         card.className = 'prod-card';
+        // ✅ إذا للعنصر رابط، اضغط يفتحه
+        if (item.link) card.onclick = () => handleInternalLink(item.link);
         const price = item.price ? `<div class="price">${item.price}</div>` : '';
         card.innerHTML = `
           ${item.image ? `<img src="${item.image}" alt="">` : ''}
@@ -433,7 +477,7 @@ function renderDynamicSections() {
         ${sec.image ? `<img src="${sec.image}" alt="" style="height:140px;object-fit:cover;">` : ''}
         ${sec.title ? `<h2>${sec.title}</h2>` : ''}
         ${sec.content ? `<p>${sec.content}</p>` : ''}
-        ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="${sec.buttonLink}" target="_blank">${sec.buttonText}</a>` : ''}
+        ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="javascript:void(0)" onclick="handleInternalLink('${safeBtnLink}')">${sec.buttonText}</a>` : ''}
       `;
     }
 
@@ -441,15 +485,9 @@ function renderDynamicSections() {
   });
 }
 
-/* ضغط عنصر داخل قسم (شبكة/منتجات) */
+/* (بقيت دالة handleSectionItemClick لكن لم تعد مستخدمة — يمكن حذفها) */
 function handleSectionItemClick(item) {
-  if (item.link) {
-    if (item.link.startsWith('http')) window.open(item.link, '_blank');
-    else {
-      const el = document.getElementById(item.link);
-      if (el) el.scrollIntoView({ behavior: 'smooth' });
-    }
-  }
+  handleInternalLink(item?.link);
 }
 
 /* ============================================================
@@ -501,7 +539,6 @@ function renderSectionsAdmin() {
   `;
 }
 
-/* فتح محرر قسم (null = قسم جديد) */
 function openSectionEditor(sectionId) {
   editingSectionId = sectionId;
   const sec = sectionId ? dynamicSections.find(s => s.id === sectionId) : null;
@@ -544,7 +581,6 @@ function closeSectionEditor() {
   if (c) c.innerHTML = '';
 }
 
-/* تحديث الحقول حسب النوع المختار */
 function onSectionTypeChange() {
   const type = document.getElementById('sec-type').value;
   const fields = document.getElementById('sec-type-fields');
@@ -552,7 +588,6 @@ function onSectionTypeChange() {
 
   let html = '';
 
-  // الصورة (تظهر لكل الأنواع عدا الشبكة والمنتجات حيث الصورة داخل العناصر)
   if (['text', 'image', 'banner'].includes(type)) {
     html += `
       <label>صورة القسم</label>
@@ -562,7 +597,6 @@ function onSectionTypeChange() {
     `;
   }
 
-  // نص المحتوى
   if (['text', 'image', 'banner'].includes(type)) {
     html += `
       <label>محتوى نصي</label>
@@ -570,17 +604,15 @@ function onSectionTypeChange() {
     `;
   }
 
-  // زر CTA
   if (['text', 'image', 'banner'].includes(type)) {
     html += `
       <label>نص الزر (اختياري)</label>
       <input type="text" id="sec-btn-text" value="${sec?.buttonText || ''}" placeholder="مثال: اضغط هنا">
       <label>رابط الزر (اختياري)</label>
-      <input type="text" id="sec-btn-link" value="${sec?.buttonLink || ''}" placeholder="https://...">
+      <input type="text" id="sec-btn-link" value="${sec?.buttonLink || ''}" placeholder="#product-123 أو https://...">
     `;
   }
 
-  // عناصر (للشبكة والمنتجات)
   if (['grid', 'products'].includes(type)) {
     html += `<label>العناصر (${sectionItemsBuffer.length})</label>
              <div id="sec-items-list"></div>
@@ -591,7 +623,6 @@ function onSectionTypeChange() {
   if (['grid', 'products'].includes(type)) renderSectionItems();
 }
 
-/* رفع صورة القسم */
 async function handleSectionImageUpload(input) {
   const file = input.files[0]; if (!file) return;
   try {
@@ -602,7 +633,6 @@ async function handleSectionImageUpload(input) {
   } catch (e) { alert('خطأ في الصورة'); }
 }
 
-/* إدارة عناصر القسم */
 function renderSectionItems() {
   const list = document.getElementById('sec-items-list');
   if (!list) return;
@@ -619,7 +649,7 @@ function renderSectionItems() {
         <input type="text" placeholder="الأيقونة (إيموجي)" value="${item.icon || ''}" oninput="updateSectionItem(${i}, 'icon', this.value)" style="max-width:80px;">
       </div>
       <div class="item-row">
-        <input type="text" placeholder="الرابط (http أو #id)" value="${item.link || ''}" oninput="updateSectionItem(${i}, 'link', this.value)">
+        <input type="text" placeholder="الرابط (#product-123 أو https://...)" value="${item.link || ''}" oninput="updateSectionItem(${i}, 'link', this.value)">
         <input type="text" placeholder="الوصف" value="${item.description || ''}" oninput="updateSectionItem(${i}, 'description', this.value)">
       </div>
       <div class="item-row">
@@ -659,7 +689,6 @@ async function handleSectionItemImage(i, input) {
   } catch (e) { alert('خطأ في الصورة'); }
 }
 
-/* حفظ القسم (إضافة أو تعديل) */
 async function saveSection() {
   const title = document.getElementById('sec-title').value.trim();
   const type = document.getElementById('sec-type').value;
@@ -673,7 +702,7 @@ async function saveSection() {
     content: document.getElementById('sec-content')?.value || '',
     buttonText: document.getElementById('sec-btn-text')?.value || '',
     buttonLink: document.getElementById('sec-btn-link')?.value || '',
-    items: ['grid', 'products'].includes(type) ? sectionItemsBuffer : []
+        items: ['grid', 'products'].includes(type) ? sectionItemsBuffer : []
   };
 
   let res;
@@ -693,7 +722,6 @@ async function saveSection() {
   }
 }
 
-/* حذف قسم */
 async function deleteSection(id) {
   if (!confirm('حذف هذا القسم نهائياً؟')) return;
   const res = await apiCall('/api/sections/delete', { sectionId: id });
@@ -704,7 +732,6 @@ async function deleteSection(id) {
   } else { tg.showAlert(res.error); }
 }
 
-/* إظهار/إخفاء قسم */
 async function toggleSectionVisibility(id) {
   const sec = dynamicSections.find(s => s.id === id);
   if (!sec) return;
@@ -714,21 +741,19 @@ async function toggleSectionVisibility(id) {
     openAdminPanel();
   } else { tg.showAlert(res.error); }
 }
-/* ترتيب قسم لأعلى/أسفل */
+
 async function moveSection(id, direction) {
   const sorted = [...dynamicSections].sort((a,b)=>(a.order||0)-(b.order||0));
   const idx = sorted.findIndex(s => s.id === id);
   if (idx === -1) return;
 
   const newIdx = idx + direction;
-  if (newIdx < 0 || newIdx >= sorted.length) return; // لا تغيير
+  if (newIdx < 0 || newIdx >= sorted.length) return;
 
-  // تبديل المواضع
   const tmp = sorted[idx];
   sorted[idx] = sorted[newIdx];
   sorted[newIdx] = tmp;
 
-  // إعادة تعيين order لكل الأقسام
   const orders = sorted.map((s, i) => ({ id: s.id, order: i }));
 
   const res = await apiCall('/api/sections/reorder', { orders });
@@ -741,7 +766,7 @@ async function moveSection(id, direction) {
 }
 
 /* ============================================================
-   لوحة التحكم الرئيسية — مدمج مع نظام الأقسام
+   لوحة التحكم الرئيسية
    ============================================================ */
 
 async function openAdminPanel() {
@@ -752,7 +777,6 @@ async function openAdminPanel() {
   const content = document.getElementById('admin-content');
   content.innerHTML = `<div class="custom-loader-wrapper"><div class="loader"><p class="loader-text">جاري التحميل...</p><span class="load"></span></div></div>`;
 
-  // تحميل كل البيانات بالتوازي
   const [data, sliderData, staffData, sectionsData] = await Promise.all([
     apiCall('/api/products'),
     userRole === 'owner' ? apiCall('/api/slider') : Promise.resolve({ ok: false, slides: [] }),
@@ -760,13 +784,12 @@ async function openAdminPanel() {
     apiCall('/api/sections')
   ]);
 
-  // تحديث الأقسام المحلية
   if (sectionsData.ok && Array.isArray(sectionsData.sections)) {
     dynamicSections = sectionsData.sections;
     renderDynamicSections();
   }
 
-  // ===== 1. المنتجات =====
+  // ===== المنتجات =====
   let productsHTML = '';
   if (data.ok && data.products.length > 0) {
     productsHTML = data.products.map(p => {
@@ -776,13 +799,16 @@ async function openAdminPanel() {
       if (p.prices?.stars > 0) pricesStr.push(`⭐ ${p.prices.stars}`);
       if (p.prices?.sar > 0) pricesStr.push(`🇸🇦 ${p.prices.sar} ريال`);
       const imgTag = p.image ? `<img src="${p.image}" style="width: 50px; height: 50px; border-radius: 5px; object-fit: cover; margin-left: 10px;">` : '';
-      return `<div style="background: #152a47; padding: 12px; margin-bottom: 12px; border-radius: 10px; display: flex; justify-content: space-between; align-items: flex-start;">
-        <div style="display: flex; align-items: center; flex: 1;">${imgTag}<div>
+      const link = p.link || ('#product-' + p.id);
+      return `<div style="background: #152a47; padding: 12px; margin-bottom: 12px; border-radius: 10px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; align-items: center; flex: 1; min-width: 180px;">${imgTag}<div>
           <strong style="font-size: 16px; color: white;">${p.name}</strong>
           <p style="font-size: 12px; color: #a0c4ff; margin: 4px 0;">${p.description}</p>
           <div style="font-size: 13px; color: #fff; margin-bottom: 4px;">${pricesStr.join(' | ') || 'لا يوجد سعر'}</div>
+          <div style="font-size: 11px; color: #4AE2A0; margin-top: 4px;">🔗 ${link}</div>
         </div></div>
-        <div style="display: flex; flex-direction: column; gap: 5px; margin-left: 10px;">
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <button onclick="copyProductLinkFromAdmin('${p.id}')" style="background: #4A90E2; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">📋 نسخ الرابط</button>
           <button onclick="editProductForm('${p.id}')" style="background: #f39c12; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">تعديل</button>
           <button onclick="deleteProduct('${p.id}')" style="background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;">حذف</button>
         </div>
@@ -790,7 +816,7 @@ async function openAdminPanel() {
     }).join('');
   } else { productsHTML = '<p>لا توجد منتجات.</p>'; }
 
-  // ===== 2. المشرفين =====
+  // ===== المشرفين =====
   let staffHTML = '';
   if (userRole === 'owner' || userRole === 'admin') {
     if (staffData.ok && staffData.staff.length > 0) {
@@ -810,7 +836,7 @@ async function openAdminPanel() {
     } else { staffHTML = '<p>لا يوجد مشرفين.</p>'; }
   }
 
-  // ===== 3. السلايدر =====
+  // ===== السلايدر =====
   let sliderHTML = '';
   if (userRole === 'owner') {
     if (sliderData.ok && sliderData.slides.length > 0) {
@@ -828,7 +854,6 @@ async function openAdminPanel() {
 
   const store = storeMenuLinks || {};
 
-  // ===== بناء لوحة التحكم =====
   content.innerHTML = `
     <!-- المنتجات -->
     <div style="background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
@@ -860,8 +885,6 @@ async function openAdminPanel() {
 
     ${userRole === 'owner' ? `
       <hr style="border-color: #333; margin: 20px 0;">
-
-      <!-- إدارة السلايدر -->
       <div style="background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
         <h3 style="margin-top: 0; color: white;">إضافة صورة للسلايدر</h3>
         <div style="margin-bottom: 8px;">
@@ -874,15 +897,13 @@ async function openAdminPanel() {
         </div>
         <input type="text" id="slide-title" placeholder="عنوان الصورة (اختياري)" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
         <input type="text" id="slide-btn-text" placeholder="نص الزر (اختياري)" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
-        <input type="text" id="slide-btn-link" placeholder="رابط الزر (مثال: https://...)" style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
+        <input type="text" id="slide-btn-link" placeholder="#product-123 أو https://..." style="width: 100%; padding: 10px; margin-bottom: 8px; border-radius: 5px; border: none; box-sizing: border-box;">
         <button onclick="addSlide()" style="background: #4A90E2; color: white; padding: 12px; width: 100%; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">إضافة الصورة</button>
       </div>
       <h3 style="color: white;">صور السلايدر الحالية</h3>
       <div>${sliderHTML}</div>
 
       <hr style="border-color: #333; margin: 20px 0;">
-
-      <!-- إدارة روابط الأقسام القديمة -->
       <div style="background: #112238; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
         <h3 style="margin-top: 0; color: white;">روابط الأقسام الأربعة (القديمة)</h3>
         <p style="font-size: 12px; color: #a0c4ff;">ملاحظة: هذه الروابط لم تعد مستخدمة إذا كانت الأقسام الديناميكية مفعّلة.</p>
@@ -914,7 +935,7 @@ async function openAdminPanel() {
   currentSliderImage = "";
 }
 
-/* ====== دوال المنتجات (مبقاة كما هي) ====== */
+/* ====== دوال المنتجات ====== */
 async function addProduct() {
   const name = document.getElementById('new-prod-name').value;
   const description = document.getElementById('new-prod-desc').value;
@@ -924,9 +945,26 @@ async function addProduct() {
     stars: parseFloat(document.getElementById('price-stars').value) || 0,
     sar: parseFloat(document.getElementById('price-sar').value) || 0
   };
-  if(!name) return alert('أدخل اسم المنتج');
-  const res = await apiCall('/api/products/add', { name, description, image: currentBase64Image, prices });
-  if(res.ok) { tg.showAlert('تمت الإضافة ✅'); openAdminPanel(); } else { tg.showAlert(res.error); }
+  if (!name) return alert('أدخل اسم المنتج');
+
+  const res = await apiCall('/api/products/add', {
+    name, description, image: currentBase64Image, prices
+  });
+
+  if (res.ok) {
+    const link = res.link || ('#product-' + res.product.id);
+
+    if (tg && tg.showAlert) {
+      tg.showAlert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + link + '\n\n(اضغط على أي زر/صورة في الأقسام وحط هذا الرابط)');
+    } else {
+      alert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + link);
+    }
+
+    navigator.clipboard.writeText(link).catch(() => {});
+    openAdminPanel();
+  } else {
+    tg.showAlert(res.error || 'فشل الإضافة');
+  }
 }
 
 async function editProductForm(id) {
@@ -995,13 +1033,13 @@ function returnToNav() {
   document.getElementById('page-home').classList.add('active');
   document.getElementById('page-nav').classList.add('active');
 }
+
 /* ============================================================
-   ✅✅✅  نظام رابط المنتج + صفحة المتجر + صفحة المنتج  ✅✅✅
+   صفحة المتجر + صفحة المنتج
    ============================================================ */
 
 let currentShopProducts = [];
 
-/* فتح صفحة المتجر */
 async function openShop() {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-shop').classList.add('active');
@@ -1025,7 +1063,7 @@ function renderShopProducts(products) {
   const sorted = [...products].sort((a, b) => {
     const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    return db - da; // الأحدث أولاً
+    return db - da;
   });
 
   const grid = document.createElement('div');
@@ -1065,7 +1103,6 @@ function formatPrices(prices) {
   return parts.join(' | ');
 }
 
-/* فتح صفحة منتج مفرد */
 async function openProduct(productId) {
   window.location.hash = '#product-' + productId;
   await loadProductPage(productId);
@@ -1079,11 +1116,9 @@ async function loadProductPage(productId) {
   const content = document.getElementById('product-content');
   content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
 
-    // جرّب تجيبه من الكاش أولاً
   let product = currentShopProducts.find(p => p.id === productId);
 
   if (!product) {
-    // اطلبه من السيرفر
     const res = await apiCall('/api/products/get', { productId });
     if (res.ok && res.product) product = res.product;
   }
@@ -1094,7 +1129,6 @@ async function loadProductPage(productId) {
   }
 
   const pricesStr = formatPrices(product.prices);
-  const shareLink = '#' + (product.slug || 'product-' + product.id);
 
   content.innerHTML = `
     <div class="product-hero">
@@ -1120,50 +1154,37 @@ async function loadProductPage(productId) {
   `;
 }
 
-/* زر الشراء (يفتح محادثة البوت أو ينسخ الرابط) */
 function buyProduct(productId) {
-  const product = currentShopProducts.find(p => p.id === productId);
-  const link = product?.link || ('#product-' + productId);
-  const shareUrl = window.location.origin + window.location.pathname + link;
-
-  if (tg && tg.showPopup) {
-    tg.showPopup({
-      title: 'اطلب المنتج',
-      message: 'هل تريد نسخ رابط المنتج للمشاركة أو إرساله للمتجر؟',
-      buttons: [
-        { id: 'copy', type: 'default', text: '📋 نسخ الرابط' },
-        { id: 'cancel', type: 'cancel', text: 'إلغاء' }
-      ]
-    }, (btnId) => {
-      if (btnId === 'copy') {
-        navigator.clipboard.writeText(shareUrl).then(() => {
-          tg.showAlert('تم نسخ الرابط ✅');
-        }).catch(() => {
-          tg.showAlert('تعذر النسخ، الرابط: ' + shareUrl);
-        });
-      }
-    });
-  } else {
-    navigator.clipboard.writeText(shareUrl).then(() => alert('تم نسخ الرابط ✅'));
-  }
+  // ✅ يفتح صفحة المنتج داخلياً
+  window.location.hash = '#product-' + productId;
 }
 
-/* نسخ رابط المنتج */
 function copyProductLink(productId) {
   const product = currentShopProducts.find(p => p.id === productId);
-  const link = product?.link || ('#product-' + productId);
-  const shareUrl = window.location.origin + window.location.pathname + link;
+  const internalLink = product?.link || ('#product-' + productId);
 
-  navigator.clipboard.writeText(shareUrl).then(() => {
-    if (tg && tg.showAlert) tg.showAlert('تم نسخ الرابط ✅');
-    else alert('تم نسخ الرابط ✅');
+  navigator.clipboard.writeText(internalLink).then(() => {
+    if (tg && tg.showAlert) tg.showAlert('تم نسخ رابط المنتج ✅\n\n' + internalLink + '\n\n(يفتح المنتج داخل التطبيق)');
+    else alert('تم نسخ الرابط:\n' + internalLink);
   }).catch(() => {
-    if (tg && tg.showAlert) tg.showAlert('الرابط: ' + shareUrl);
-    else alert('الرابط: ' + shareUrl);
+    if (tg && tg.showAlert) tg.showAlert('الرابط: ' + internalLink);
+    else alert('الرابط: ' + internalLink);
   });
 }
 
-/* الرجوع للرئيسية */
+function copyProductLinkFromAdmin(productId) {
+  const product = currentShopProducts.find(p => p.id === productId);
+  const internalLink = product?.link || ('#product-' + productId);
+
+  navigator.clipboard.writeText(internalLink).then(() => {
+    if (tg && tg.showAlert) tg.showAlert('تم نسخ رابط المنتج ✅\n\n' + internalLink + '\n\n(يفتح المنتج داخل التطبيق)');
+    else alert('تم نسخ الرابط:\n' + internalLink);
+  }).catch(() => {
+    if (tg && tg.showAlert) tg.showAlert('الرابط:\n' + internalLink);
+    else alert('الرابط:\n' + internalLink);
+  });
+}
+
 function goHome() {
   window.location.hash = '';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -1171,16 +1192,12 @@ function goHome() {
   document.getElementById('page-nav').classList.add('active');
 }
 
-/* ============================================================
-   ✅ مستمع تغيير الـ hash (يفتح المنتج من أي رابط #product-xxx)
-   ============================================================ */
 async function handleHashChange() {
   const hash = window.location.hash.replace('#', '');
   if (!hash) return;
 
   if (hash.startsWith('product-')) {
     const productId = hash.replace('product-', '');
-    // تأكد من تحميل المنتجات أولاً
     if (currentShopProducts.length === 0) {
       const data = await apiCall('/api/products');
       if (data.ok && data.products) currentShopProducts = data.products;
@@ -1189,169 +1206,8 @@ async function handleHashChange() {
   }
 }
 
-// استمع لتغيّر الـ hash
 window.addEventListener('hashchange', handleHashChange);
 
-// عند التحميل الأول، إذا فيه hash، افتح المنتج
 setTimeout(() => {
   if (window.location.hash) handleHashChange();
 }, 1500);
-
-/* ============================================================
-   ✅ زر المتجر بدل الجرس + تحديث openAdminPanel لعرض رابط المنتج
-   ============================================================ */
-
-// استبدال أيقونة bell بـ shop في الشريط السفلي
-// (عدّل الدالة initNav1 — استبدل السطر tabs فقط)
-//
-// في initNav1، غيّر:
-//   let tabs = [{key:'home'},{key:'heart'},{key:'cart'},{key:'headset'},{key:'bell'}];
-// إلى:
-//   let tabs = [{key:'home'},{key:'heart'},{key:'cart'},{key:'headset'},{key:'shop'}];
-//
-// وأضف في switch:
-//   else if (currentTabs[i].key === 'shop') { openShop(); }
-
-/* إعادة تعريف initNav1 مع زر المتجر */
-const originalInitNav1 = initNav1;
-initNav1 = function() {
-  const nav1 = document.getElementById('nav1');
-  nav1.innerHTML = '';
-  let tabs = [{key:'home'},{key:'heart'},{key:'cart'},{key:'headset'},{key:'shop'}];
-  if (userRole !== 'user') tabs.push({key:'admin'});
-
-  const indicator = document.createElement('span'); indicator.className = 'active-indicator';
-  const spotlight = document.createElement('span'); spotlight.className = 'spotlight';
-
-  // أيقونة المتجر
-  const shopIcon = '<path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/>';
-  if (!icons.shop) icons.shop = shopIcon;
-
-  tabs.forEach((tab, i) => {
-    const b = document.createElement('button');
-    b.className = 'nav-item';
-    b.innerHTML = `<span class="icon">${svg(tab.key, 26)}</span>`;
-    b.addEventListener('click', () => setNav1(i, tabs));
-    nav1.append(b);
-  });
-
-  nav1.append(indicator, spotlight);
-
-  function setNav1(i, currentTabs) {
-    nav1.querySelectorAll('.nav-item').forEach((b, j) => {
-      b.classList.toggle('active', i === j);
-      b.querySelector('.icon').classList.toggle('active-icon', i === j);
-    });
-    const item = nav1.querySelectorAll('.nav-item')[i];
-    const left = item.offsetLeft + item.offsetWidth / 2;
-    indicator.style.left = left + 'px';
-    spotlight.style.left = left + 'px';
-
-    const key = currentTabs[i].key;
-    if (key === 'admin') {
-      openAdminPanel();
-    } else if (key === 'shop') {
-      openShop();
-    } else if (key === 'home') {
-      window.location.hash = '';
-      document.getElementById('page-admin').classList.remove('active');
-      document.getElementById('page-empty').classList.remove('active');
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      document.getElementById('page-home').classList.add('active');
-      document.getElementById('page-nav').classList.add('active');
-    } else {
-      // heart / cart / headset — مؤقتاً الرئيسية
-      document.getElementById('page-admin').classList.remove('active');
-      document.getElementById('page-empty').classList.remove('active');
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      document.getElementById('page-home').classList.add('active');
-      document.getElementById('page-nav').classList.add('active');
-    }
-  }
-  setTimeout(() => setNav1(0, tabs), 50);
-  nav1Initialized = true;
-};
-
-// إعادة تفعيل الشريط بعد الاستبدال
-if (nav1Initialized) initNav1();
-
-/* ============================================================
-   ✅ إضافة عرض رابط المنتج في لوحة التحكم
-   ============================================================ */
-// في openAdminPanel، بعد إضافة منتج بنجاح، نعرض الرابط.
-// عدّل دالة addProduct لتكون:
-
-const originalAddProduct = addProduct;
-addProduct = async function() {
-  const name = document.getElementById('new-prod-name').value;
-  const description = document.getElementById('new-prod-desc').value;
-  const prices = {
-    usd: parseFloat(document.getElementById('price-usd').value) || 0,
-    ton: parseFloat(document.getElementById('price-ton').value) || 0,
-    stars: parseFloat(document.getElementById('price-stars').value) || 0,
-    sar: parseFloat(document.getElementById('price-sar').value) || 0
-  };
-  if (!name) return alert('أدخل اسم المنتج');
-
-  const res = await apiCall('/api/products/add', {
-    name, description, image: currentBase64Image, prices
-  });
-
-  if (res.ok) {
-    // إظهار الرابط
-    const link = res.link || ('#product-' + res.product.id);
-    const fullUrl = window.location.origin + window.location.pathname + link;
-
-    if (tg && tg.showAlert) {
-      tg.showAlert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + fullUrl);
-    } else {
-      alert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + fullUrl);
-    }
-
-    // نسخ الرابط تلقائياً
-    navigator.clipboard.writeText(fullUrl).catch(() => {});
-
-    openAdminPanel();
-  } else {
-    tg.showAlert(res.error || 'فشل الإضافة');
-  }
-};
-
-// تحديث قائمة المنتجات في لوحة التحكم لتظهر الرابط مع كل منتج
-// (هذا يتم داخل openAdminPanel — استبدل قسم productsHTML)
-
-const originalOpenAdminPanel = openAdminPanel;
-openAdminPanel = async function() {
-  // استدعِ الأصلية
-  await originalOpenAdminPanel();
-
-  // بعد الرسم، أضف روابط المنتجات لكل منتج
-  const products = await apiCall('/api/products');
-  if (!products.ok || !products.products) return;
-
-  // ابحث عن كل بطاقة منتج في لوحة التحكم وأضف الرابط
-  // (هذا سيتم عبر إعادة رسم بطاقات المنتجات بالروابط)
-  // نستخدم طريقة أسهل: نضيف زر "نسخ الرابط" بجانب كل منتج
-  // لكن هذا يتطلب تعديل productsHTML — نفعله في الإصدار القادم
-
-  // حالياً: فقط تأكد أن منتجات المتجر محدّثة
-  currentShopProducts = products.products;
-};
-
-/* ============================================================
-   ✅ إضافة زر "نسخ رابط المنتج" لكل منتج في لوحة التحكم
-   ============================================================ */
-// هذه الدالة تُستدعى من بطاقات المنتجات في لوحة التحكم
-function copyProductLinkFromAdmin(productId) {
-  const product = currentShopProducts.find(p => p.id === productId);
-  const link = product?.link || ('#product-' + productId);
-  const fullUrl = window.location.origin + window.location.pathname + link;
-
-  navigator.clipboard.writeText(fullUrl).then(() => {
-    if (tg && tg.showAlert) tg.showAlert('تم نسخ رابط المنتج ✅\n\n' + fullUrl);
-    else alert('تم نسخ الرابط:\n' + fullUrl);
-  }).catch(() => {
-    if (tg && tg.showAlert) tg.showAlert('الرابط:\n' + fullUrl);
-    else alert('الرابط:\n' + fullUrl);
-  });
-}
