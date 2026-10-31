@@ -1,7 +1,7 @@
 /* ============================================================
    DAYO STORE — app.js (النسخة النهائية)
    ============================================================ */
-
+alert('app.js loaded! length: ' + (window.Telegram?.WebApp?.initData?.length || 0));
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 
