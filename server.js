@@ -7,8 +7,29 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
 
-const BOT_TOKEN = '9223595013:AAG-_2pU6IuxDxcvty7K1OFg9HmSncaaTno';
+// حد بسيط للطلبات لمنع الإغراق. في بيئة متعددة الخوادم استخدم Redis أو rate-limit package.
+const requestBuckets = new Map();
+app.use('/api', (req, res, next) => {
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const bucket = requestBuckets.get(key) || { count: 0, resetAt: now + 60_000 };
+  if (now > bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = now + 60_000;
+  }
+  bucket.count += 1;
+  requestBuckets.set(key, bucket);
+  if (bucket.count > 180) return res.status(429).json({ ok: false, error: 'طلبات كثيرة، حاول بعد دقيقة' });
+  next();
+});
+
+// لا تضع أسرار البوت أو قاعدة البيانات داخل الكود.
+const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGODB_URI = process.env.MONGODB_URI;
+const OWNER_TELEGRAM_ID = process.env.OWNER_TELEGRAM_ID || '51442749';
+
+if (!BOT_TOKEN) throw new Error('يرجى ضبط BOT_TOKEN في متغيرات البيئة');
+if (!MONGODB_URI) throw new Error('يرجى ضبط MONGODB_URI في متغيرات البيئة');
 
 const client = new MongoClient(MONGODB_URI, {
   serverApi: {
@@ -27,8 +48,8 @@ async function connectDB() {
     console.log('✅ متصل بقاعدة بيانات MongoDB');
 
     const usersCollection = db.collection('users');
-    if (!await usersCollection.findOne({ _id: '51442749' })) {
-      await usersCollection.insertOne({ _id: '51442749', role: 'owner', name: 'المالك' });
+    if (!await usersCollection.findOne({ _id: OWNER_TELEGRAM_ID })) {
+      await usersCollection.insertOne({ _id: OWNER_TELEGRAM_ID, role: 'owner', name: 'المالك' });
     }
 
     const storeCollection = db.collection('store');
@@ -79,51 +100,108 @@ async function connectDB() {
     }
 
   } catch (err) {
-    console.error('❌ فشل الاتصال بقاعدة البيانات:', err.message);
+    console.error('❌ فشل تهيئة قاعدة البيانات:', err);
+    throw err;
   }
 }
-connectDB();
 
 /* =========================================================
    دوال مساعدة
    ========================================================= */
 function verifyTelegramData(initData, botToken) {
+  if (typeof initData !== 'string' || !initData.trim()) {
+    throw new Error('بيانات تيليجرام مفقودة');
+  }
+
   const urlParams = new URLSearchParams(initData);
   const hash = urlParams.get('hash');
+  const authDate = Number(urlParams.get('auth_date'));
+  const userJson = urlParams.get('user');
+
+  if (!hash || !/^[a-f0-9]{64}$/i.test(hash)) {
+    throw new Error('توقيع تيليجرام مفقود أو غير صالح');
+  }
+  if (!Number.isFinite(authDate) || !userJson) {
+    throw new Error('بيانات جلسة تيليجرام غير مكتملة');
+  }
+
+  // رفض بيانات تسجيل الدخول الأقدم من 24 ساعة أو المؤرخة في المستقبل.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (authDate > nowSeconds + 30 || nowSeconds - authDate > 86400) {
+    throw new Error('انتهت صلاحية جلسة تيليجرام، أعد فتح المتجر');
+  }
+
   urlParams.delete('hash');
-  const dataCheckString = Array.from(urlParams.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join('\n');
+  const dataCheckString = Array.from(urlParams.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\\n');
+
   const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
-  const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
-  if (calculatedHash !== hash) throw new Error('توقيع غير صالح');
-  return { user: JSON.parse(urlParams.get('user')) };
+  const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest();
+  const receivedHash = Buffer.from(hash, 'hex');
+
+  if (receivedHash.length !== calculatedHash.length ||
+      !crypto.timingSafeEqual(calculatedHash, receivedHash)) {
+    throw new Error('توقيع تيليجرام غير صالح');
+  }
+
+  let user;
+  try {
+    user = JSON.parse(userJson);
+  } catch {
+    throw new Error('بيانات مستخدم تيليجرام غير صالحة');
+  }
+  if (!user || !user.id) throw new Error('معرف مستخدم تيليجرام مفقود');
+
+  return { user };
 }
 
 async function getUserFromReq(req) {
-  const { initData } = req.body;
-  if (!initData) throw new Error('مفقود');
-  const parsed = verifyTelegramData(initData, BOT_TOKEN);
-  const userId = parsed.user.id.toString();
+  const initData = req.body?.initData;
+  if (!initData) throw new Error('بيانات تسجيل الدخول مفقودة');
 
-  // ✅ تحديث lastSeen + اسم المستخدم
+  const parsed = verifyTelegramData(initData, BOT_TOKEN);
+  const userId = String(parsed.user.id);
   const now = new Date();
-  const existing = await db.collection('users').findOne({ _id: userId });
-  if (existing) {
-    await db.collection('users').updateOne(
-      { _id: userId },
-      { $set: { lastSeen: now, name: parsed.user.first_name || existing.name || 'مستخدم' } }
-    );
-  } else {
-    await db.collection('users').insertOne({
-      _id: userId,
-      role: 'user',
-      name: parsed.user.first_name || 'مستخدم',
-      joinedAt: now,
-      lastSeen: now
-    });
-  }
+  const displayName = String(parsed.user.first_name || 'مستخدم').slice(0, 100);
+
+  // upsert ذري لتفادي تعارض أول تسجيل دخول متزامن.
+  await db.collection('users').updateOne(
+    { _id: userId },
+    {
+      $set: { lastSeen: now, name: displayName },
+      $setOnInsert: { role: 'user', joinedAt: now }
+    },
+    { upsert: true }
+  );
 
   const dbUser = await db.collection('users').findOne({ _id: userId });
-  return { id: userId, role: dbUser?.role || 'user', name: dbUser?.name || parsed.user.first_name };
+  return {
+    id: userId,
+    role: dbUser?.role || 'user',
+    name: dbUser?.name || displayName
+  };
+}
+
+function isValidRole(role) {
+  return ['user', 'moderator', 'admin'].includes(role);
+}
+
+function validatePrices(prices) {
+  if (!prices || typeof prices !== 'object' || Array.isArray(prices)) {
+    throw new Error('بيانات الأسعار غير صحيحة');
+  }
+  const allowed = ['usd', 'ton', 'stars', 'sar'];
+  const clean = {};
+  for (const key of allowed) {
+    const value = prices[key] === undefined ? 0 : Number(prices[key]);
+    if (!Number.isFinite(value) || value < 0 || value > 100000000) {
+      throw new Error(`قيمة السعر ${key} غير صحيحة`);
+    }
+    clean[key] = value;
+  }
+  return clean;
 }
 
 async function getSectionsList() {
@@ -191,18 +269,26 @@ app.post('/api/products/add', async (req, res) => {
     if (user.role === 'user') throw new Error('ليس لديك صلاحية');
 
     const { name, description, image, prices, category, badge, discount } = req.body;
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 150) {
+      throw new Error('اسم المنتج مطلوب وبحد أقصى 150 حرفًا');
+    }
+    const cleanPrices = validatePrices(prices || {});
+    const cleanDiscount = Number(discount || 0);
+    if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) {
+      throw new Error('نسبة الخصم يجب أن تكون بين 0 و100');
+    }
     const id = Date.now().toString();
     const slug = 'product-' + id;
 
     const newProduct = {
       id, slug, link: '#' + slug,
-      name,
-      description: description || 'لا يوجد وصف',
-      image: image || '',
-      prices: prices || { usd: 0, ton: 0, stars: 0, sar: 0 },
+      name: name.trim(),
+      description: typeof description === 'string' ? description.slice(0, 5000) : 'لا يوجد وصف',
+      image: typeof image === 'string' ? image : '',
+      prices: cleanPrices,
       category: category || 'all',
       badge: badge || '',
-      discount: parseFloat(discount) || 0,
+      discount: cleanDiscount,
       soldCount: 0,
       creatorId: user.id,
       creatorName: user.name,
@@ -224,13 +310,26 @@ app.post('/api/products/edit', async (req, res) => {
 
     if (user.role === 'owner' || user.role === 'admin' || (user.role === 'moderator' && product.creatorId === user.id)) {
       const updateData = {};
-      if (name) updateData.name = name;
-      if (description) updateData.description = description;
-      if (image !== undefined) updateData.image = image;
-      if (prices) updateData.prices = prices;
+      if (name !== undefined) {
+        if (typeof name !== 'string' || !name.trim() || name.trim().length > 150) throw new Error('اسم المنتج غير صحيح');
+        updateData.name = name.trim();
+      }
+      if (description !== undefined) {
+        if (typeof description !== 'string') throw new Error('الوصف غير صحيح');
+        updateData.description = description.slice(0, 5000);
+      }
+      if (image !== undefined) {
+        if (typeof image !== 'string') throw new Error('رابط الصورة غير صحيح');
+        updateData.image = image;
+      }
+      if (prices !== undefined) updateData.prices = validatePrices(prices);
       if (category !== undefined) updateData.category = category;
       if (badge !== undefined) updateData.badge = badge;
-      if (discount !== undefined) updateData.discount = parseFloat(discount) || 0;
+      if (discount !== undefined) {
+        const cleanDiscount = Number(discount);
+        if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) throw new Error('نسبة الخصم يجب أن تكون بين 0 و100');
+        updateData.discount = cleanDiscount;
+      }
 
       await db.collection('products').updateOne({ id: productId }, { $set: updateData });
       res.json({ ok: true });
@@ -259,10 +358,15 @@ app.post('/api/products/delete', async (req, res) => {
 
 app.post('/api/products/increment-sold', async (req, res) => {
   try {
-    await getUserFromReq(req);
+    const user = await getUserFromReq(req);
+    if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية لتعديل عدد المبيعات');
     const { productId } = req.body;
     if (!productId) throw new Error('معرف المنتج مطلوب');
-    await db.collection('products').updateOne({ id: productId }, { $inc: { soldCount: 1 } });
+    const result = await db.collection('products').updateOne(
+      { id: String(productId) },
+      { $inc: { soldCount: 1 } }
+    );
+    if (!result.matchedCount) throw new Error('المنتج غير موجود');
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
@@ -270,17 +374,28 @@ app.post('/api/products/increment-sold', async (req, res) => {
 app.post('/api/users/promote', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
-    const { targetId, newRole } = req.body;
+    const targetId = String(req.body?.targetId || '');
+    const newRole = req.body?.newRole;
+
+    if (!targetId || !isValidRole(newRole)) throw new Error('بيانات الصلاحية غير صحيحة');
+    if (targetId === user.id) throw new Error('لا يمكنك تغيير صلاحية حسابك من هنا');
 
     if (user.role === 'owner') {
-      await db.collection('users').updateOne({ _id: targetId }, { $set: { role: newRole } }, { upsert: true });
+      const target = await db.collection('users').findOne({ _id: targetId });
+      if (!target) throw new Error('المستخدم غير موجود');
+      if (target.role === 'owner') throw new Error('لا يمكن تغيير صلاحية المالك');
+      await db.collection('users').updateOne({ _id: targetId }, { $set: { role: newRole } });
     } else if (user.role === 'admin' && newRole === 'moderator') {
-      await db.collection('users').updateOne({ _id: targetId }, { $set: { role: 'moderator' } }, { upsert: true });
+      const target = await db.collection('users').findOne({ _id: targetId });
+      if (!target || !['user', 'moderator'].includes(target.role)) throw new Error('لا يمكن تعديل صلاحية هذا المستخدم');
+      await db.collection('users').updateOne({ _id: targetId }, { $set: { role: 'moderator' } });
     } else {
       throw new Error('ليس لديك صلاحية');
     }
     res.json({ ok: true });
-  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+  } catch (err) {
+    res.status(403).json({ ok: false, error: err.message });
+  }
 });
 
 app.post('/api/users/list', async (req, res) => {
@@ -299,22 +414,27 @@ app.post('/api/users/list', async (req, res) => {
 app.post('/api/users/update-role', async (req, res) => {
   try {
     const requester = await getUserFromReq(req);
-    const { targetId, newRole } = req.body;
+    const targetId = String(req.body?.targetId || '');
+    const newRole = req.body?.newRole;
 
-    if (requester.role !== 'owner' && requester.role !== 'admin') throw new Error('ليس لديك صلاحية');
+    if (!['owner', 'admin'].includes(requester.role)) throw new Error('ليس لديك صلاحية');
+    if (!targetId || !['user', 'moderator', 'admin'].includes(newRole)) {
+      throw new Error('الصلاحية المطلوبة غير صحيحة');
+    }
+    if (targetId === requester.id) throw new Error('لا يمكنك تغيير صلاحية حسابك');
 
     const targetUser = await db.collection('users').findOne({ _id: targetId });
     if (!targetUser) throw new Error('المستخدم غير موجود');
 
-    if (requester.role === 'admin' && (targetUser.role === 'owner' || targetUser.role === 'admin')) {
-      throw new Error('ليس لديك صلاحية لتعديل هذا الشخص');
+    if (targetUser.role === 'owner') throw new Error('لا يمكن تغيير صلاحية المالك');
+    if (requester.role === 'admin') {
+      if (targetUser.role === 'admin' || newRole === 'admin') {
+        throw new Error('ليس لديك صلاحية لتعديل صلاحية مدير');
+      }
+      if (!['user', 'moderator'].includes(newRole)) throw new Error('ليس لديك صلاحية لهذه الرتبة');
     }
 
-    if (newRole === 'user') {
-      await db.collection('users').deleteOne({ _id: targetId });
-    } else {
-      await db.collection('users').updateOne({ _id: targetId }, { $set: { role: newRole } });
-    }
+    await db.collection('users').updateOne({ _id: targetId }, { $set: { role: newRole } });
     res.json({ ok: true });
   } catch (err) {
     res.status(403).json({ ok: false, error: err.message });
@@ -456,8 +576,14 @@ app.post('/api/sections/edit', async (req, res) => {
     const list = await getSectionsList();
     const idx = list.findIndex(s => s.id === sectionId);
     if (idx === -1) throw new Error('القسم غير موجود');
-    if (title !== undefined) list[idx].title = title;
-    if (type !== undefined) list[idx].type = type;
+    if (title !== undefined) {
+      if (typeof title !== 'string' || !title.trim() || title.length > 150) throw new Error('عنوان القسم غير صحيح');
+      list[idx].title = title.trim();
+    }
+    if (type !== undefined) {
+      if (!['grid', 'text', 'image', 'products', 'banner'].includes(type)) throw new Error('نوع القسم غير مدعوم');
+      list[idx].type = type;
+    }
     if (image !== undefined) list[idx].image = image;
     if (content !== undefined) list[idx].content = content;
     if (buttonText !== undefined) list[idx].buttonText = buttonText;
@@ -566,4 +692,15 @@ app.get('/health', (req, res) => res.status(200).send('OK'));
 app.head('/health', (req, res) => res.status(200).end());
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ الخادم يعمل على المنفذ ${PORT}`));
+
+async function startServer() {
+  try {
+    await connectDB();
+    app.listen(PORT, () => console.log(`✅ الخادم يعمل على المنفذ ${PORT}`));
+  } catch (err) {
+    console.error('❌ تعذر تشغيل الخادم:', err.message);
+    process.exit(1);
+  }
+}
+
+startServer();
