@@ -86,6 +86,16 @@ async function connectDB() {
       });
     }
 
+    if (!await db.collection('badges').findOne({ _id: 'main' })) {
+      await db.collection('badges').insertOne({
+        _id: 'main',
+        list: [
+          { id: 'new', name: 'جديد', icon: '⚡', color: '#4AE2A0', textColor: '#07131F' },
+          { id: 'featured', name: 'مميز', icon: '⭐', color: '#F39C12', textColor: '#FFFFFF' }
+        ]
+      });
+    }
+
     // ✅ الأيقونات المربعة
     if (!await db.collection('quickIcons').findOne({ _id: 'main' })) {
       await db.collection('quickIcons').insertOne({
@@ -135,7 +145,7 @@ function verifyTelegramData(initData, botToken) {
   const dataCheckString = Array.from(urlParams.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}=${value}`)
-    .join('\n');
+    .join('\\n');
 
   const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
   const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest();
@@ -227,13 +237,7 @@ app.post('/api/me', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     res.json({ ok: true, user });
-  } catch (err) {
-    console.error('فشل التحقق من Telegram في /api/me:', err);
-    res.status(401).json({
-      ok: false,
-      error: err?.message || 'تعذر التحقق من بيانات تيليجرام'
-    });
-  }
+  } catch (err) { res.status(401).json({ ok: false }); }
 });
 
 // ✅ إحصائيات حقيقية
@@ -654,7 +658,11 @@ app.post('/api/categories', async (req, res) => {
   try {
     await getUserFromReq(req);
     const doc = await db.collection('categories').findOne({ _id: 'main' });
-    res.json({ ok: true, categories: doc?.list || [] });
+    const categories = (doc?.list || []).map(cat => ({
+      ...cat,
+      link: cat.id === 'all' ? '#shop' : `#category-${cat.id}`
+    }));
+    res.json({ ok: true, categories });
   } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
 
@@ -663,9 +671,54 @@ app.post('/api/categories/save', async (req, res) => {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
     const { categories } = req.body;
-    if (!Array.isArray(categories)) throw new Error('بيانات غير صحيحة');
-    await db.collection('categories').updateOne({ _id: 'main' }, { $set: { list: categories } }, { upsert: true });
-    res.json({ ok: true });
+    if (!Array.isArray(categories) || categories.length > 100) throw new Error('قائمة التصنيفات غير صحيحة');
+    const ids = new Set();
+    const cleanCategories = categories.map((cat) => {
+      if (!cat || typeof cat !== 'object') throw new Error('بيانات تصنيف غير صحيحة');
+      const id = String(cat.id || '').trim();
+      const name = String(cat.name || '').trim();
+      if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id) || !name || name.length > 80 || ids.has(id)) throw new Error('اسم أو معرف التصنيف غير صالح');
+      ids.add(id);
+      return { id, name, icon: String(cat.icon || '📦').slice(0, 12), link: id === 'all' ? '#shop' : `#category-${id}` };
+    });
+    if (!cleanCategories.some(c => c.id === 'all')) cleanCategories.unshift({ id: 'all', name: 'الكل', icon: '🛍️', link: '#shop' });
+    await db.collection('categories').updateOne({ _id: 'main' }, { $set: { list: cleanCategories } }, { upsert: true });
+    res.json({ ok: true, categories: cleanCategories });
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
+/* =========================================================
+   شارات المنتجات القابلة للإدارة
+   ========================================================= */
+app.post('/api/badges', async (req, res) => {
+  try {
+    await getUserFromReq(req);
+    const doc = await db.collection('badges').findOne({ _id: 'main' });
+    res.json({ ok: true, badges: doc?.list || [] });
+  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/badges/save', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية');
+    const { badges } = req.body;
+    if (!Array.isArray(badges) || badges.length > 40) throw new Error('قائمة الشارات غير صحيحة');
+    const ids = new Set();
+    const cleanBadges = badges.map((badge) => {
+      if (!badge || typeof badge !== 'object') throw new Error('بيانات شارة غير صحيحة');
+      const id = String(badge.id || '').trim();
+      const name = String(badge.name || '').trim();
+      if (!/^[a-zA-Z0-9_-]{1,60}$/.test(id) || !name || name.length > 30 || ids.has(id)) throw new Error('اسم أو معرف الشارة غير صالح');
+      ids.add(id);
+      const color = /^#[0-9a-fA-F]{6}$/.test(String(badge.color || '')) ? badge.color : '#4A90E2';
+      const textColor = /^#[0-9a-fA-F]{6}$/.test(String(badge.textColor || '')) ? badge.textColor : '#FFFFFF';
+      return { id, name, icon: String(badge.icon || '🏷️').slice(0, 12), color, textColor };
+    });
+    if (!cleanBadges.some(b => b.id === 'new')) cleanBadges.unshift({ id: 'new', name: 'جديد', icon: '⚡', color: '#4AE2A0', textColor: '#07131F' });
+    if (!cleanBadges.some(b => b.id === 'featured')) cleanBadges.push({ id: 'featured', name: 'مميز', icon: '⭐', color: '#F39C12', textColor: '#FFFFFF' });
+    await db.collection('badges').updateOne({ _id: 'main' }, { $set: { list: cleanBadges } }, { upsert: true });
+    res.json({ ok: true, badges: cleanBadges });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
