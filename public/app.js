@@ -20,6 +20,7 @@ let sectionImageBuffer = "";
 let sectionItemsBuffer = [];
 
 let currentCategories = [];
+let currentBadges = [];
 let currentShopProducts = [];
 let shopState = { search: '', category: 'all', sort: 'newest' };
 
@@ -130,9 +131,10 @@ async function fetchUserRole() {
     console.info('DAYO account verified:', { id: data.user.id, role: data.user.role });
     if (nav1Initialized) initNav1();
     await Promise.allSettled([
-      loadStoreData(), loadSlider(), loadDynamicSections(), loadCategories(),
-      loadQuickIcons(), loadRealStats(), loadHomeProducts()
+      loadStoreData(), loadSlider(), loadDynamicSections(), loadCategories(), loadBadges(),
+      loadQuickIcons(), loadRealStats()
     ]);
+    await loadHomeProducts();
   } catch (err) {
     console.error('فشل التحقق من المستخدم:', err);
     userRole = 'user';
@@ -205,6 +207,8 @@ function handleInternalLink(link) {
   const value = String(link).trim();
   const hash = extractHash(value);
   if (hash === '#shop') { openShop(); return; }
+  if (hash.startsWith('#category-')) { openShop(hash.slice('#category-'.length)); return; }
+  if (hash.startsWith('#category/')) { openShop(hash.slice('#category/'.length)); return; }
   if (hash === '#home') { goHome(); return; }
   if (hash.startsWith('#product-')) {
     const productId = hash.slice('#product-'.length);
@@ -644,10 +648,13 @@ function renderHScrollProducts(containerId, products) {
   products.forEach(p => {
     const card = document.createElement('div'); card.className = 'h-card'; card.addEventListener('click', () => openProduct(p.id));
     const wrap = document.createElement('div'); wrap.className = 'h-card-wrap';
-    if (Number(p.discount) > 0 || ['new','featured'].includes(p.badge)) {
-      const badge = document.createElement('div'); badge.className = Number(p.discount) > 0 ? 'card-badge discount' : `card-badge ${p.badge}`;
+    if (Number(p.discount) > 0) {
+      const badge = document.createElement('div'); badge.className = 'card-badge discount';
       badge.style.cssText = 'position:absolute;top:6px;right:6px;';
-      badge.textContent = Number(p.discount) > 0 ? `🔥 -${Math.min(99, Number(p.discount) || 0)}%` : (p.badge === 'new' ? '⚡' : '⭐'); wrap.appendChild(badge);
+      badge.textContent = `🔥 -${Math.min(100, Number(p.discount) || 0)}%`; wrap.appendChild(badge);
+    } else {
+      const badge = makeProductBadge(p.badge);
+      if (badge) { badge.style.cssText += ';position:absolute;top:6px;right:6px;'; wrap.appendChild(badge); }
     }
     const imageURL = safeImageURL(p.image);
     if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.className = 'h-card-img'; img.alt = p.name || ''; wrap.appendChild(img); }
@@ -665,6 +672,100 @@ function renderHScrollProducts(containerId, products) {
 async function loadCategories() {
   const res = await apiCall('/api/categories');
   if (res.ok && Array.isArray(res.categories)) currentCategories = res.categories;
+}
+
+async function loadBadges() {
+  const res = await apiCall('/api/badges');
+  if (res.ok && Array.isArray(res.badges)) currentBadges = res.badges;
+}
+
+function getBadgeDefinition(id) {
+  return currentBadges.find(b => b.id === id) || null;
+}
+
+function makeProductBadge(id, extraClass = '') {
+  const config = getBadgeDefinition(id);
+  if (!config) return null;
+  const el = document.createElement('span');
+  el.className = `card-badge ${extraClass}`.trim();
+  el.style.backgroundColor = safeColor(config.color, '#4A90E2');
+  el.style.color = safeColor(config.textColor, '#FFFFFF');
+  el.textContent = `${config.icon || '🏷️'} ${config.name}`;
+  return el;
+}
+
+function badgeOptionsHTML(selected = '') {
+  return '<option value="">بدون شارة</option>' + currentBadges.map(b =>
+    `<option value="${escapeHTML(b.id)}" ${b.id === selected ? 'selected' : ''}>${escapeHTML(b.icon || '🏷️')} ${escapeHTML(b.name)}</option>`
+  ).join('');
+}
+
+function renderBadgesAdmin() {
+  return `
+    <hr style="border-color:#333;margin:20px 0;">
+    <div class="admin-form">
+      <h3 style="margin-top:0;color:white;">🏷️ إدارة شارات المنتجات</h3>
+      <p style="color:#a0c4ff;font-size:12px;line-height:1.7;">أنشئ شارة باسم وأيقونة ولون، ثم اخترها عند إضافة المنتج أو تعديله.</p>
+      <div id="badges-list"></div>
+      <div style="display:grid;grid-template-columns:1fr 70px;gap:8px;margin-top:12px;">
+        <input id="new-badge-name" type="text" maxlength="30" placeholder="اسم الشارة مثل الأكثر مبيعاً" style="margin:0;">
+        <input id="new-badge-icon" type="text" maxlength="4" value="🏷️" aria-label="أيقونة الشارة" style="margin:0;text-align:center;">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+        <label style="color:#a0c4ff;font-size:12px;">لون الخلفية<input id="new-badge-color" type="color" value="#4A90E2" style="width:100%;height:38px;margin-top:4px;"></label>
+        <label style="color:#a0c4ff;font-size:12px;">لون النص<input id="new-badge-text-color" type="color" value="#FFFFFF" style="width:100%;height:38px;margin-top:4px;"></label>
+      </div>
+      <button class="primary" onclick="addBadge()" style="width:100%;margin-top:10px;">➕ إنشاء الشارة</button>
+    </div>`;
+}
+
+function renderBadgesList() {
+  const list = document.getElementById('badges-list');
+  if (!list) return;
+  list.replaceChildren();
+  currentBadges.forEach(b => {
+    const row = document.createElement('div'); row.className = 'admin-section-card'; row.style.marginBottom = '7px';
+    const info = document.createElement('div'); info.className = 'info';
+    const preview = document.createElement('span'); preview.textContent = `${b.icon || '🏷️'} ${b.name}`;
+    preview.style.cssText = `display:inline-block;padding:5px 10px;border-radius:9px;background:${safeColor(b.color)};color:${safeColor(b.textColor, '#fff')};font-size:12px;font-weight:700;`;
+    const id = document.createElement('small'); id.textContent = `المعرّف: ${b.id}`;
+    info.append(preview, id); row.appendChild(info);
+    if (!['new', 'featured'].includes(b.id)) {
+      const actions = document.createElement('div'); actions.className = 'actions';
+      const del = document.createElement('button'); del.className = 'btn-delete'; del.textContent = 'حذف';
+      del.addEventListener('click', () => deleteBadge(b.id)); actions.appendChild(del); row.appendChild(actions);
+    }
+    list.appendChild(row);
+  });
+}
+
+async function addBadge() {
+  const name = document.getElementById('new-badge-name')?.value.trim();
+  const icon = document.getElementById('new-badge-icon')?.value.trim() || '🏷️';
+  const color = document.getElementById('new-badge-color')?.value || '#4A90E2';
+  const textColor = document.getElementById('new-badge-text-color')?.value || '#FFFFFF';
+  if (!name) return showMessage('اكتب اسم الشارة أولاً.');
+  const id = 'badge_' + Date.now().toString(36);
+  const badges = [...currentBadges, { id, name, icon, color, textColor }];
+  const res = await apiCall('/api/badges/save', { badges });
+  if (!res.ok) return showMessage(res.error || 'تعذر إنشاء الشارة.');
+  currentBadges = res.badges || badges;
+  renderBadgesList();
+  const badgeSelect = document.getElementById('new-prod-badge');
+  if (badgeSelect) { const selected = badgeSelect.value; badgeSelect.innerHTML = badgeOptionsHTML(selected); }
+  const nameInput = document.getElementById('new-badge-name'); if (nameInput) nameInput.value = '';
+  showMessage('تم إنشاء الشارة بنجاح.');
+}
+
+async function deleteBadge(id) {
+  if (!confirm('حذف الشارة؟ المنتجات التي تستخدمها ستظهر دون شارة.')) return;
+  const badges = currentBadges.filter(b => b.id !== id);
+  const res = await apiCall('/api/badges/save', { badges });
+  if (!res.ok) return showMessage(res.error || 'تعذر حذف الشارة.');
+  currentBadges = res.badges || badges;
+  renderBadgesList();
+  const badgeSelect = document.getElementById('new-prod-badge');
+  if (badgeSelect) { const selected = badgeSelect.value; badgeSelect.innerHTML = badgeOptionsHTML(selected); }
 }
 
 function renderCategoriesAdmin() {
@@ -693,13 +794,16 @@ function renderCategoriesList() {
     const row = document.createElement('div'); row.className = 'admin-section-card'; row.style.marginBottom = '6px';
     const info = document.createElement('div'); info.className = 'info';
     const strong = document.createElement('strong'); strong.textContent = `${cat.icon || '📦'} ${cat.name || ''}`;
-    const small = document.createElement('small'); small.textContent = `ID: ${cat.id}`;
+    const small = document.createElement('small'); small.textContent = `الرابط الداخلي: ${cat.id === 'all' ? '#shop' : '#category-' + cat.id}`;
     info.append(strong, small); row.appendChild(info);
+    const actions = document.createElement('div'); actions.className = 'actions';
+    const copy = document.createElement('button'); copy.textContent = 'نسخ الرابط'; copy.style.cssText = 'background:#315d91;color:white;border:0;padding:7px 9px;border-radius:7px;font-size:11px;';
+    copy.addEventListener('click', () => copyPageLink(cat.id === 'all' ? '#shop' : '#category-' + cat.id)); actions.appendChild(copy);
     if (cat.id !== 'all') {
-      const actions = document.createElement('div'); actions.className = 'actions';
-      const del = document.createElement('button'); del.className = 'btn-delete'; del.textContent = '🗑️'; del.addEventListener('click', () => deleteCategory(cat.id));
-      actions.appendChild(del); row.appendChild(actions);
+      const del = document.createElement('button'); del.className = 'btn-delete'; del.textContent = 'حذف'; del.addEventListener('click', () => deleteCategory(cat.id));
+      actions.appendChild(del);
     }
+    row.appendChild(actions);
     list.appendChild(row);
   });
 }
@@ -1107,13 +1211,14 @@ async function openAdminPanel() {
   if (!content) return;
   content.innerHTML = `<div class="custom-loader-wrapper"><div class="loader"><p class="loader-text">جاري التحميل...</p><span class="load"></span></div></div>`;
 
-  const [data, sliderData, staffData, sectionsData, catsData, qiData] = await Promise.all([
+  const [data, sliderData, staffData, sectionsData, catsData, qiData, badgesData] = await Promise.all([
     apiCall('/api/products'),
     userRole === 'owner' ? apiCall('/api/slider') : Promise.resolve({ ok: false, slides: [] }),
     (userRole === 'owner' || userRole === 'admin') ? apiCall('/api/users/list') : Promise.resolve({ ok: false, staff: [] }),
     apiCall('/api/sections'),
     apiCall('/api/categories'),
-    apiCall('/api/quick-icons')
+    apiCall('/api/quick-icons'),
+    apiCall('/api/badges')
   ]);
 
   if (sectionsData.ok && Array.isArray(sectionsData.sections)) {
@@ -1122,6 +1227,7 @@ async function openAdminPanel() {
   }
   if (catsData.ok && Array.isArray(catsData.categories)) currentCategories = catsData.categories;
   if (qiData.ok && Array.isArray(qiData.icons)) quickIcons = qiData.icons;
+  if (badgesData.ok && Array.isArray(badgesData.badges)) currentBadges = badgesData.badges;
   if (data.ok && Array.isArray(data.products)) currentShopProducts = data.products;
 
   let productsHTML = '';
@@ -1205,9 +1311,7 @@ async function openAdminPanel() {
           ${catOptions}
         </select>
         <select id="new-prod-badge" style="padding:8px;border-radius:5px;border:none;">
-          <option value="">بدون شارة</option>
-          <option value="new">⚡ جديد</option>
-          <option value="featured">⭐ مميز</option>
+          ${badgeOptionsHTML()}
         </select>
       </div>
       <input type="number" id="new-prod-discount" placeholder="نسبة الخصم %" style="width:100%;padding:8px;margin-bottom:8px;border-radius:5px;border:none;" min="0" max="99">
@@ -1219,6 +1323,7 @@ async function openAdminPanel() {
 
     ${userRole === 'owner' || userRole === 'admin' ? renderSectionsAdmin() : ''}
     ${userRole === 'owner' || userRole === 'admin' ? renderCategoriesAdmin() : ''}
+    ${userRole === 'owner' || userRole === 'admin' ? renderBadgesAdmin() : ''}
     ${userRole === 'owner' || userRole === 'admin' ? renderQuickIconsAdmin() : ''}
     ${userRole === 'owner' ? renderHeroButtonAdmin() : ''}
 
@@ -1265,6 +1370,7 @@ async function openAdminPanel() {
 
   if (userRole === 'owner' || userRole === 'admin') {
     renderCategoriesList();
+    renderBadgesList();
     renderQuickIconsAdminList();
   }
 
@@ -1378,7 +1484,7 @@ async function saveMenuLinks() {
 /* ============================================================
    صفحة المتجر (بدون تغيير hash)
    ============================================================ */
-async function openShop() {
+async function openShop(categoryId = null) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-shop').classList.add('active');
   document.getElementById('page-nav').classList.add('active');
@@ -1387,16 +1493,19 @@ async function openShop() {
   if (!content) return;
   content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
 
-  const [productsRes, catsRes] = await Promise.all([
+  const [productsRes, catsRes, badgesRes] = await Promise.all([
     apiCall('/api/products'),
-    apiCall('/api/categories')
+    apiCall('/api/categories'),
+    apiCall('/api/badges')
   ]);
 
   if (catsRes.ok && Array.isArray(catsRes.categories)) currentCategories = catsRes.categories;
+  if (badgesRes?.ok && Array.isArray(badgesRes.badges)) currentBadges = badgesRes.badges;
   if (productsRes.ok && Array.isArray(productsRes.products)) currentShopProducts = productsRes.products;
   else currentShopProducts = [];
 
-  shopState = { search: '', category: 'all', sort: 'newest' };
+  const requestedCategory = categoryId && currentCategories.some(c => c.id === categoryId) ? categoryId : 'all';
+  shopState = { search: '', category: requestedCategory, sort: 'newest' };
   const searchInput = document.getElementById('shop-search-input');
   if (searchInput) searchInput.value = '';
   const sortSelect = document.getElementById('shop-sort');
@@ -1477,11 +1586,11 @@ function renderShopProducts(products) {
     const card = document.createElement('div'); card.className = 'shop-card';
     card.addEventListener('click', () => openProduct(p.id));
     const imageWrap = document.createElement('div'); imageWrap.className = 'card-img-wrap';
-    if (Number(p.discount) > 0 || ['new','featured'].includes(p.badge)) {
-      const badge = document.createElement('div');
-      badge.className = Number(p.discount) > 0 ? 'card-badge discount' : `card-badge ${p.badge}`;
-      badge.textContent = Number(p.discount) > 0 ? `🔥 -${Math.min(99, Number(p.discount) || 0)}%` : (p.badge === 'new' ? '⚡ جديد' : '⭐ مميز');
-      imageWrap.appendChild(badge);
+    if (Number(p.discount) > 0) {
+      const badge = document.createElement('div'); badge.className = 'card-badge discount';
+      badge.textContent = `🔥 خصم ${Math.min(100, Number(p.discount) || 0)}%`; imageWrap.appendChild(badge);
+    } else {
+      const badge = makeProductBadge(p.badge); if (badge) imageWrap.appendChild(badge);
     }
     const imageURL = safeImageURL(p.image);
     if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.className = 'card-img'; img.alt = p.name || ''; imageWrap.appendChild(img); }
@@ -1534,10 +1643,13 @@ async function loadProductPage(productId) {
   if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.alt = product.name || ''; hero.appendChild(img); }
   else { const placeholder = document.createElement('div'); placeholder.className = 'hero-placeholder'; placeholder.textContent = '📦'; hero.appendChild(placeholder); }
   const info = document.createElement('div'); info.className = 'product-info';
-  if (Number(product.discount) > 0 || ['new','featured'].includes(product.badge)) {
-    const badge = document.createElement('span'); badge.className = Number(product.discount) > 0 ? 'card-badge discount' : `card-badge ${product.badge}`;
+  if (Number(product.discount) > 0) {
+    const badge = document.createElement('span'); badge.className = 'card-badge discount';
     badge.style.cssText = 'position:static;display:inline-block;margin-bottom:8px;';
-    badge.textContent = Number(product.discount) > 0 ? `🔥 خصم ${Math.min(99, Number(product.discount) || 0)}%` : (product.badge === 'new' ? '⚡ جديد' : '⭐ مميز'); info.appendChild(badge);
+    badge.textContent = `🔥 خصم ${Math.min(100, Number(product.discount) || 0)}%`; info.appendChild(badge);
+  } else {
+    const badge = makeProductBadge(product.badge);
+    if (badge) { badge.style.cssText += ';position:static;display:inline-block;margin-bottom:8px;'; info.appendChild(badge); }
   }
   const title = document.createElement('h2'); title.textContent = product.name || 'بدون اسم'; info.appendChild(title);
   const categoryName = currentCategories.find(c => c.id === product.category)?.name || '';
