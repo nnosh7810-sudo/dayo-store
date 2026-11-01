@@ -1,7 +1,6 @@
 /* ============================================================
    DAYO STORE — app.js (النسخة النهائية)
    ============================================================ */
-alert('app.js loaded! length: ' + (window.Telegram?.WebApp?.initData?.length || 0));
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 
@@ -36,6 +35,43 @@ const SECTION_TYPES = {
   banner:   { label: 'بانر دعائي',              color: '#f39c12' }
 };
 
+// حماية المخرجات القادمة من قاعدة البيانات قبل إدراجها داخل HTML.
+function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>\"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+function safeWebURL(value, allowImageData = false) {
+  const raw = String(value ?? '').trim();
+  if (allowImageData && /^data:image\/(png|jpeg|jpg|webp|gif);base64,[a-z0-9+/=]+$/i.test(raw)) return raw;
+  if (/^https?:\/\//i.test(raw)) {
+    try { const url = new URL(raw); if (url.protocol === 'https:' || url.protocol === 'http:') return url.href; } catch (_) {}
+  }
+  if (allowImageData && raw.startsWith('/') && !raw.startsWith('//')) {
+    try { return new URL(raw, window.location.origin).href; } catch (_) {}
+  }
+  return '';
+}
+
+function safeImageURL(value) {
+  return safeWebURL(value, true);
+}
+
+function safeColor(value, fallback = '#4A90E2') {
+  const color = String(value ?? '').trim();
+  return /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|hsla?\([\d\s.,%]+\))$/i.test(color) ? color : fallback;
+}
+
+function encodedArg(value) {
+  return encodeURIComponent(String(value ?? '')).replace(/[!'()*]/g, ch => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function showMessage(message) {
+  if (tg?.showAlert) tg.showAlert(String(message));
+  else window.alert(String(message));
+}
+
 function safeRemoveActive(id) {
   const el = document.getElementById(id);
   if (el) el.classList.remove('active');
@@ -51,42 +87,57 @@ safeRemoveActive('page-empty');
 safeAddActive('page-truck');
 
 async function apiCall(endpoint, body = {}) {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, initData: initDataGlobal })
-  });
-  return await response.json();
+  if (typeof endpoint !== 'string' || !endpoint.startsWith('/api/')) {
+    throw new Error('مسار API غير صالح');
+  }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ ...body, initData: initDataGlobal }),
+      signal: controller.signal
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!payload || typeof payload !== 'object') throw new Error('استجابة غير صالحة من الخادم');
+    return payload;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('انتهت مهلة الاتصال بالخادم');
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function fetchUserRole() {
-  // ✅ أضف هذا السطر لعرض initData على الشاشة
-  document.body.insertAdjacentHTML('afterbegin', `<div style="position:fixed;top:0;left:0;right:0;background:#ff0;color:#000;padding:10px;z-index:99999;font-size:12px;">initData length: ${tg?.initData?.length || 0}</div>`);
-
-  if (!tg || !tg.initData) return;
+  if (!tg?.initData) {
+    console.warn('يجب فتح المتجر من داخل Telegram Mini App.');
+    return;
+  }
   initDataGlobal = tg.initData;
-  if (!tg || !tg.initData) return;
-  initDataGlobal = tg.initData;
-
   const firstName = tg.initDataUnsafe?.user?.first_name || '';
   const welcomeEl = document.getElementById('welcome-name');
   if (welcomeEl && firstName) welcomeEl.textContent = `أهلاً ${firstName} 👋`;
 
   try {
     const data = await apiCall('/api/me');
-    if (data.ok) {
-      userRole = data.user.role;
-      userInfo = data.user;
-      if (nav1Initialized) initNav1();
-      loadStoreData();
-      loadSlider();
-      loadDynamicSections();
-      loadCategories();
-      loadQuickIcons();
-      loadRealStats();
-      loadHomeProducts();
-    }
-  } catch (err) { console.error(err); }
+    if (!data?.ok || !data.user) throw new Error(data?.error || 'تعذر التحقق من الحساب');
+    userRole = ['owner', 'admin', 'moderator', 'user'].includes(data.user.role) ? data.user.role : 'user';
+    userInfo = data.user;
+    if (nav1Initialized) initNav1();
+    await Promise.allSettled([
+      loadStoreData(), loadSlider(), loadDynamicSections(), loadCategories(),
+      loadQuickIcons(), loadRealStats(), loadHomeProducts()
+    ]);
+  } catch (err) {
+    console.error('فشل التحقق من المستخدم:', err);
+    userRole = 'user';
+    userInfo = null;
+    showMessage(err.message || 'تعذر الاتصال بالخادم. حاول مرة أخرى.');
+  }
 }
 
 /* ====== أنيميشن الشاحنة ====== */
@@ -150,16 +201,21 @@ function extractHash(link) {
 
 function handleInternalLink(link) {
   if (!link) return;
-  const hash = extractHash(link);
+  const value = String(link).trim();
+  const hash = extractHash(value);
   if (hash === '#shop') { openShop(); return; }
   if (hash === '#home') { goHome(); return; }
   if (hash.startsWith('#product-')) {
-    const productId = hash.replace('#product-', '');
-    openProduct(productId);
+    const productId = hash.slice('#product-'.length);
+    if (productId) openProduct(productId);
     return;
   }
-  if (link.startsWith('http')) { window.open(link, '_blank'); return; }
-  const el = document.getElementById(link);
+  const external = safeWebURL(value);
+  if (external) {
+    window.open(external, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  const el = document.getElementById(value);
   if (el) el.scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -237,7 +293,7 @@ async function loadStoreData() {
     if (nameEl) nameEl.textContent = data.store.name;
     if (data.store.logo) {
       const logoEl = document.getElementById('store-logo');
-      if (logoEl) { logoEl.style.backgroundImage = `url('${data.store.logo}')`; logoEl.innerText = ''; }
+      if (logoEl) { logoEl.style.backgroundImage = safeImageURL(data.store.logo) ? `url("${safeImageURL(data.store.logo)}")` : 'none'; logoEl.innerText = ''; }
     }
     storeMenuLinks = data.store.menuLinks || {};
     if (data.store.heroButton) {
@@ -251,7 +307,7 @@ function updateHeroButton() {
   const btn = document.getElementById('hero-cta-btn');
   if (!btn) return;
   btn.textContent = '🛍️ ' + (heroButtonData.text || 'تسوق الآن');
-  btn.style.background = `linear-gradient(90deg, ${heroButtonData.color || '#4A90E2'}, #8A2BE2)`;
+  btn.style.background = `linear-gradient(90deg, ${safeColor(heroButtonData.color)}, #8A2BE2)`;
   btn.onclick = () => handleInternalLink(heroButtonData.link || '#shop');
 }
 
@@ -266,6 +322,7 @@ function editLogo() {
 
 async function handleCoverUpload(input) {
   const file = input.files[0]; if (!file) return;
+  if (!file.type?.startsWith('image/') || file.size > 8 * 1024 * 1024) return showMessage('اختر صورة صالحة بحجم أقل من 8MB.');
   try {
     const base64 = await compressImage(file, 800, 400);
     const res = await apiCall('/api/store/update', { cover: base64 });
@@ -276,6 +333,7 @@ async function handleCoverUpload(input) {
 
 async function handleLogoUpload(input) {
   const file = input.files[0]; if (!file) return;
+  if (!file.type?.startsWith('image/') || file.size > 8 * 1024 * 1024) return showMessage('اختر صورة صالحة بحجم أقل من 8MB.');
   try {
     const base64 = await compressImage(file, 400, 400);
     const res = await apiCall('/api/store/update', { logo: base64 });
@@ -308,30 +366,46 @@ function renderHeroSlider(slides) {
   const track = document.getElementById('hero-slider-track');
   const dotsContainer = document.getElementById('hero-slider-dots');
   if (!track || !dotsContainer) return;
-  track.innerHTML = '';
-  dotsContainer.innerHTML = '';
+  track.replaceChildren();
+  dotsContainer.replaceChildren();
   if (heroSliderInterval) clearInterval(heroSliderInterval);
-  if (slides.length === 0) {
-    track.innerHTML = '<div style="color:#a0c4ff;text-align:center;width:100%;padding-top:80px;">لا توجد صور.</div>';
+  if (!Array.isArray(slides) || slides.length === 0) {
+    track.textContent = 'لا توجد صور.';
     return;
   }
   currentHeroSlideIndex = 0;
   slides.forEach((slide, i) => {
     const slideDiv = document.createElement('div');
     slideDiv.className = 'hero-slide';
-    slideDiv.style.backgroundImage = `url('${slide.image}')`;
-    let contentHTML = `<div class="hero-slide-content">`;
-    contentHTML += `<span class="slide-badge">👑 عروض خاصة</span>`;
-    if (slide.title) contentHTML += `<h3 class="slide-title">${slide.title}</h3>`;
-    if (slide.btnText && slide.btnLink) {
-      contentHTML += `<a href="javascript:void(0)" onclick="handleInternalLink('${slide.btnLink.replace(/'/g, "\\'")}')" class="slide-btn">${slide.btnText}</a>`;
+    const imageURL = safeImageURL(slide.image);
+    if (imageURL) slideDiv.style.backgroundImage = `url("${imageURL}")`;
+    const content = document.createElement('div');
+    content.className = 'hero-slide-content';
+    const badge = document.createElement('span');
+    badge.className = 'slide-badge';
+    badge.textContent = '👑 عروض خاصة';
+    content.appendChild(badge);
+    if (slide.title) {
+      const title = document.createElement('h3');
+      title.className = 'slide-title';
+      title.textContent = slide.title;
+      content.appendChild(title);
     }
-    contentHTML += `</div>`;
-    slideDiv.innerHTML = contentHTML;
+    if (slide.btnText && slide.btnLink) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'slide-btn';
+      button.textContent = slide.btnText;
+      button.addEventListener('click', () => handleInternalLink(slide.btnLink));
+      content.appendChild(button);
+    }
+    slideDiv.appendChild(content);
     track.appendChild(slideDiv);
-    const dot = document.createElement('div');
+    const dot = document.createElement('button');
+    dot.type = 'button';
     dot.className = `hero-dot ${i === 0 ? 'active' : ''}`;
-    dot.onclick = () => goToHeroSlide(i, slides.length);
+    dot.setAttribute('aria-label', `الشريحة ${i + 1}`);
+    dot.addEventListener('click', () => goToHeroSlide(i, slides.length));
     dotsContainer.appendChild(dot);
   });
   startHeroSliderTimer(slides.length);
@@ -357,6 +431,7 @@ function startHeroSliderTimer(totalSlides) {
 
 async function handleSliderImageUpload(input) {
   const file = input.files[0]; if (!file) return;
+  if (!file.type?.startsWith('image/') || file.size > 8 * 1024 * 1024) return showMessage('اختر صورة صالحة بحجم أقل من 8MB.');
   try {
     const base64 = await compressImage(file, 800, 400);
     currentSliderImage = base64;
@@ -376,6 +451,7 @@ async function addSlide() {
 }
 
 async function deleteSlide(id) {
+  try { id = decodeURIComponent(id); } catch (_) { return; }
   if(!confirm('حذف الصورة؟')) return;
   const res = await apiCall('/api/slider/delete', { slideId: id });
   if(res.ok) { loadSlider(); openAdminPanel(); } else alert(res.error);
@@ -393,6 +469,7 @@ function compressImage(file, maxWidth = 400, maxHeight = 400) {
         let width = img.width, height = img.height;
         if (width > height) { if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; } }
         else { if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; } }
+        width = Math.max(1, Math.round(width)); height = Math.max(1, Math.round(height));
         const canvas = document.createElement('canvas');
         canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
@@ -407,6 +484,7 @@ function compressImage(file, maxWidth = 400, maxHeight = 400) {
 
 async function handleImageUpload(input, previewId) {
   const file = input.files[0]; if (!file) return;
+  if (!file.type?.startsWith('image/') || file.size > 8 * 1024 * 1024) return showMessage('اختر صورة صالحة بحجم أقل من 8MB.');
   try {
     const base64 = await compressImage(file);
     currentBase64Image = base64;
@@ -427,19 +505,19 @@ async function loadQuickIcons() {
 function renderQuickIcons() {
   const container = document.getElementById('quick-icons-container');
   if (!container) return;
-  container.innerHTML = '';
+  container.replaceChildren();
   quickIcons.forEach(icon => {
     const div = document.createElement('div');
     div.className = 'quick-icon';
-    div.onclick = () => handleInternalLink(icon.link);
-    const imgHTML = icon.image
-      ? `<img src="${icon.image}" alt="">`
-      : `<span>${icon.icon || '📦'}</span>`;
-    div.innerHTML = `
-      <div class="quick-icon-img" style="color:${icon.color || '#4A90E2'};">${imgHTML}</div>
-      <div class="quick-icon-title">${icon.title || 'عنصر'}</div>
-    `;
-    container.appendChild(div);
+    div.addEventListener('click', () => handleInternalLink(icon.link));
+    const iconBox = document.createElement('div');
+    iconBox.className = 'quick-icon-img';
+    iconBox.style.color = safeColor(icon.color);
+    const imageURL = safeImageURL(icon.image);
+    if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.alt = ''; iconBox.appendChild(img); }
+    else { const span = document.createElement('span'); span.textContent = icon.icon || '📦'; iconBox.appendChild(span); }
+    const title = document.createElement('div'); title.className = 'quick-icon-title'; title.textContent = icon.title || 'عنصر';
+    div.append(iconBox, title); container.appendChild(div);
   });
 }
 
@@ -455,58 +533,80 @@ async function loadDynamicSections() {
 function renderDynamicSections() {
   const container = document.getElementById('dynamic-sections-container');
   if (!container) return;
-  container.innerHTML = '';
+  container.replaceChildren();
   const visible = dynamicSections.filter(s => s.visible !== false).sort((a, b) => (a.order || 0) - (b.order || 0));
   if (visible.length === 0) {
-    container.innerHTML = '<p style="text-align:center;color:#a0c4ff;font-size:13px;padding:20px;">لا توجد أقسام.</p>';
+    const empty = document.createElement('p');
+    empty.style.cssText = 'text-align:center;color:#a0c4ff;font-size:13px;padding:20px;';
+    empty.textContent = 'لا توجد أقسام.';
+    container.appendChild(empty);
     return;
   }
   visible.forEach(sec => {
     const el = document.createElement('div');
     el.className = 'dynamic-section';
-    el.id = `section-${sec.id}`;
-    const safeBtnLink = (sec.buttonLink || '').replace(/'/g, "\\'");
-    if (sec.type === 'grid') {
-      el.innerHTML = sec.title ? `<h2>${sec.title}</h2>` : '';
+    el.id = `section-${String(sec.id).replace(/[^a-zA-Z0-9_-]/g, '')}`;
+    if (sec.title) {
+      const heading = document.createElement('h2');
+      heading.textContent = sec.title;
+      el.appendChild(heading);
+    }
+    if (['text', 'image', 'banner'].includes(sec.type)) {
+      const imageURL = safeImageURL(sec.image);
+      if (imageURL) {
+        const img = document.createElement('img');
+        img.src = imageURL;
+        img.alt = sec.title || 'صورة القسم';
+        if (sec.type === 'banner') img.style.cssText = 'height:140px;object-fit:cover;';
+        el.appendChild(img);
+      }
+      if (sec.content) {
+        const paragraph = document.createElement('p');
+        paragraph.textContent = sec.content;
+        el.appendChild(paragraph);
+      }
+      if (sec.buttonText && sec.buttonLink) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'section-btn';
+        button.textContent = sec.buttonText;
+        button.addEventListener('click', () => handleInternalLink(sec.buttonLink));
+        el.appendChild(button);
+      }
+    } else if (sec.type === 'grid') {
       const grid = document.createElement('div');
       grid.className = 'grid-menu';
-      (sec.items || []).forEach(item => {
+      (Array.isArray(sec.items) ? sec.items : []).forEach(item => {
         const itemDiv = document.createElement('div');
         itemDiv.className = 'grid-item';
-        itemDiv.onclick = () => handleInternalLink(item.link);
-        const iconHTML = item.image ? `<img src="${item.image}" alt="">` : `<span>${item.icon || '📦'}</span>`;
-        itemDiv.innerHTML = `
-          <div class="grid-icon" style="color:${item.color || '#4A90E2'};">${iconHTML}</div>
-          <div class="grid-title">${item.title || 'عنصر'}</div>
-        `;
-        grid.appendChild(itemDiv);
+        itemDiv.addEventListener('click', () => handleInternalLink(item.link));
+        const iconBox = document.createElement('div');
+        iconBox.className = 'grid-icon';
+        iconBox.style.color = safeColor(item.color);
+        const imageURL = safeImageURL(item.image);
+        if (imageURL) {
+          const img = document.createElement('img'); img.src = imageURL; img.alt = ''; iconBox.appendChild(img);
+        } else {
+          const span = document.createElement('span'); span.textContent = item.icon || '📦'; iconBox.appendChild(span);
+        }
+        const title = document.createElement('div'); title.className = 'grid-title'; title.textContent = item.title || 'عنصر';
+        itemDiv.append(iconBox, title); grid.appendChild(itemDiv);
       });
       el.appendChild(grid);
-    } else if (sec.type === 'text' || sec.type === 'image' || sec.type === 'banner') {
-      el.innerHTML = `
-        ${sec.image ? `<img src="${sec.image}" alt="${sec.type === 'banner' ? 'style="height:140px;object-fit:cover;"' : ''}">` : ''}
-        ${sec.title ? `<h2>${sec.title}</h2>` : ''}
-        ${sec.content ? `<p>${sec.content}</p>` : ''}
-        ${sec.buttonText && sec.buttonLink ? `<a class="section-btn" href="javascript:void(0)" onclick="handleInternalLink('${safeBtnLink}')">${sec.buttonText}</a>` : ''}
-      `;
     } else if (sec.type === 'products') {
-      el.innerHTML = `<h2>${sec.title || 'منتجات'}</h2>`;
       const grid = document.createElement('div');
       grid.className = 'dynamic-products';
-      (sec.items || []).forEach(item => {
-        const card = document.createElement('div');
-        card.className = 'prod-card';
-        if (item.link) card.onclick = () => handleInternalLink(item.link);
-        const price = item.price ? `<div class="price">${item.price}</div>` : '';
-        card.innerHTML = `
-          ${item.image ? `<img src="${item.image}" alt="">` : ''}
-          <div class="info">
-            <strong>${item.title || ''}</strong>
-            ${item.description ? `<small>${item.description}</small>` : ''}
-            ${price}
-          </div>
-        `;
-        grid.appendChild(card);
+      (Array.isArray(sec.items) ? sec.items : []).forEach(item => {
+        const card = document.createElement('div'); card.className = 'prod-card';
+        if (item.link) card.addEventListener('click', () => handleInternalLink(item.link));
+        const imageURL = safeImageURL(item.image);
+        if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.alt = ''; card.appendChild(img); }
+        const info = document.createElement('div'); info.className = 'info';
+        const title = document.createElement('strong'); title.textContent = item.title || '';
+        info.appendChild(title);
+        if (item.description) { const desc = document.createElement('small'); desc.textContent = item.description; info.appendChild(desc); }
+        if (item.price) { const price = document.createElement('div'); price.className = 'price'; price.textContent = item.price; info.appendChild(price); }
+        card.appendChild(info); grid.appendChild(card);
       });
       el.appendChild(grid);
     }
@@ -535,36 +635,26 @@ async function loadHomeProducts() {
 function renderHScrollProducts(containerId, products) {
   const container = document.getElementById(containerId);
   if (!container) return;
-  container.innerHTML = '';
-
-  if (!products || products.length === 0) {
-    container.innerHTML = '<p style="color:#a0c4ff;font-size:12px;padding:10px;">لا توجد منتجات.</p>';
-    return;
+  container.replaceChildren();
+  if (!Array.isArray(products) || products.length === 0) {
+    const empty = document.createElement('p'); empty.style.cssText = 'color:#a0c4ff;font-size:12px;padding:10px;';
+    empty.textContent = 'لا توجد منتجات.'; container.appendChild(empty); return;
   }
-
   products.forEach(p => {
-    const card = document.createElement('div');
-    card.className = 'h-card';
-    card.onclick = () => openProduct(p.id);
-
-    let badgeHTML = '';
-    if (p.discount > 0) badgeHTML = `<div class="card-badge discount" style="position:absolute;top:6px;right:6px;">🔥 -${p.discount}%</div>`;
-    else if (p.badge === 'new') badgeHTML = `<div class="card-badge new" style="position:absolute;top:6px;right:6px;">⚡</div>`;
-    else if (p.badge === 'featured') badgeHTML = `<div class="card-badge featured" style="position:absolute;top:6px;right:6px;">⭐</div>`;
-
-    const pricesStr = formatPrices(p.prices);
-
-    card.innerHTML = `
-      <div class="h-card-wrap">
-        ${badgeHTML}
-        ${p.image ? `<img src="${p.image}" class="h-card-img" alt="">` : `<div class="h-card-img-placeholder">📦</div>`}
-      </div>
-      <div class="h-card-body">
-        <strong>${p.name || 'بدون اسم'}</strong>
-        <div class="price">${pricesStr || '—'}</div>
-      </div>
-    `;
-    container.appendChild(card);
+    const card = document.createElement('div'); card.className = 'h-card'; card.addEventListener('click', () => openProduct(p.id));
+    const wrap = document.createElement('div'); wrap.className = 'h-card-wrap';
+    if (Number(p.discount) > 0 || ['new','featured'].includes(p.badge)) {
+      const badge = document.createElement('div'); badge.className = Number(p.discount) > 0 ? 'card-badge discount' : `card-badge ${p.badge}`;
+      badge.style.cssText = 'position:absolute;top:6px;right:6px;';
+      badge.textContent = Number(p.discount) > 0 ? `🔥 -${Math.min(99, Number(p.discount) || 0)}%` : (p.badge === 'new' ? '⚡' : '⭐'); wrap.appendChild(badge);
+    }
+    const imageURL = safeImageURL(p.image);
+    if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.className = 'h-card-img'; img.alt = p.name || ''; wrap.appendChild(img); }
+    else { const placeholder = document.createElement('div'); placeholder.className = 'h-card-img-placeholder'; placeholder.textContent = '📦'; wrap.appendChild(placeholder); }
+    const body = document.createElement('div'); body.className = 'h-card-body';
+    const title = document.createElement('strong'); title.textContent = p.name || 'بدون اسم';
+    const price = document.createElement('div'); price.className = 'price'; price.textContent = formatPrices(p.prices) || '—';
+    body.append(title, price); card.append(wrap, body); container.appendChild(card);
   });
 }
 
@@ -594,21 +684,23 @@ function renderCategoriesAdmin() {
 function renderCategoriesList() {
   const list = document.getElementById('categories-list');
   if (!list) return;
-  if (!currentCategories || currentCategories.length === 0) {
-    list.innerHTML = '<p style="color:#a0c4ff;font-size:12px;">لا توجد تصنيفات.</p>';
-    return;
+  list.replaceChildren();
+  if (!Array.isArray(currentCategories) || currentCategories.length === 0) {
+    const empty = document.createElement('p'); empty.style.cssText = 'color:#a0c4ff;font-size:12px;'; empty.textContent = 'لا توجد تصنيفات.'; list.appendChild(empty); return;
   }
-  list.innerHTML = currentCategories.map(cat => `
-    <div class="admin-section-card" style="margin-bottom:6px;">
-      <div class="info">
-        <strong>${cat.icon || '📦'} ${cat.name}</strong>
-        <small>ID: ${cat.id}</small>
-      </div>
-      <div class="actions">
-        ${cat.id !== 'all' ? `<button class="btn-delete" onclick="deleteCategory('${cat.id}')">🗑️</button>` : ''}
-      </div>
-    </div>
-  `).join('');
+  currentCategories.forEach(cat => {
+    const row = document.createElement('div'); row.className = 'admin-section-card'; row.style.marginBottom = '6px';
+    const info = document.createElement('div'); info.className = 'info';
+    const strong = document.createElement('strong'); strong.textContent = `${cat.icon || '📦'} ${cat.name || ''}`;
+    const small = document.createElement('small'); small.textContent = `ID: ${cat.id}`;
+    info.append(strong, small); row.appendChild(info);
+    if (cat.id !== 'all') {
+      const actions = document.createElement('div'); actions.className = 'actions';
+      const del = document.createElement('button'); del.className = 'btn-delete'; del.textContent = '🗑️'; del.addEventListener('click', () => deleteCategory(cat.id));
+      actions.appendChild(del); row.appendChild(actions);
+    }
+    list.appendChild(row);
+  });
 }
 
 async function addCategory() {
@@ -628,6 +720,7 @@ async function addCategory() {
 }
 
 async function deleteCategory(id) {
+  try { id = decodeURIComponent(id); } catch (_) { return; }
   if (!confirm('حذف هذا التصنيف؟')) return;
   const newCats = currentCategories.filter(c => c.id !== id);
   const res = await apiCall('/api/categories/save', { categories: newCats });
@@ -669,6 +762,7 @@ let qiImageBuffer = '';
 
 async function handleQiImageUpload(input) {
   const file = input.files[0]; if (!file) return;
+  if (!file.type?.startsWith('image/') || file.size > 8 * 1024 * 1024) return showMessage('اختر صورة صالحة بحجم أقل من 8MB.');
   try {
     const base64 = await compressImage(file, 200, 200);
     qiImageBuffer = base64;
@@ -680,23 +774,25 @@ async function handleQiImageUpload(input) {
 function renderQuickIconsAdminList() {
   const list = document.getElementById('quick-icons-admin-list');
   if (!list) return;
-  if (!quickIcons || quickIcons.length === 0) {
-    list.innerHTML = '<p style="color:#a0c4ff;font-size:12px;">لا توجد أيقونات.</p>';
-    return;
+  list.replaceChildren();
+  if (!Array.isArray(quickIcons) || quickIcons.length === 0) {
+    const empty = document.createElement('p'); empty.style.cssText = 'color:#a0c4ff;font-size:12px;'; empty.textContent = 'لا توجد أيقونات.'; list.appendChild(empty); return;
   }
-  list.innerHTML = quickIcons.map((icon, i) => `
-    <div class="admin-section-card">
-      <div class="info">
-        <strong>${icon.image ? `<img src="${icon.image}" style="width:24px;height:24px;border-radius:4px;vertical-align:middle;margin-left:5px;">` : icon.icon || '📦'} ${icon.title}</strong>
-        <small>${icon.link}</small>
-      </div>
-      <div class="actions">
-        <button class="btn-up" onclick="moveQuickIcon(${i}, -1)">⬆️</button>
-        <button class="btn-down" onclick="moveQuickIcon(${i}, 1)">⬇️</button>
-        <button class="btn-delete" onclick="deleteQuickIcon(${i})">🗑️</button>
-      </div>
-    </div>
-  `).join('');
+  quickIcons.forEach((item, i) => {
+    const row = document.createElement('div'); row.className = 'admin-section-card';
+    const info = document.createElement('div'); info.className = 'info';
+    const strong = document.createElement('strong');
+    const imageURL = safeImageURL(item.image);
+    if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.alt = ''; img.style.cssText = 'width:24px;height:24px;border-radius:4px;vertical-align:middle;margin-left:5px;'; strong.appendChild(img); }
+    else strong.append(document.createTextNode(`${item.icon || '📦'} `));
+    strong.append(document.createTextNode(item.title || ''));
+    const small = document.createElement('small'); small.textContent = item.link || '';
+    info.append(strong, small);
+    const actions = document.createElement('div'); actions.className = 'actions';
+    const buttons = [['btn-up','⬆️',() => moveQuickIcon(i,-1)],['btn-down','⬇️',() => moveQuickIcon(i,1)],['btn-delete','🗑️',() => deleteQuickIcon(i)]];
+    buttons.forEach(([cls,label,handler]) => { const button = document.createElement('button'); button.className = cls; button.textContent = label; button.addEventListener('click', handler); actions.appendChild(button); });
+    row.append(info, actions); list.appendChild(row);
+  });
 }
 
 async function saveQuickIcons() {
@@ -748,11 +844,11 @@ function renderHeroButtonAdmin() {
     <div class="admin-form">
       <h3 style="margin-top:0;color:white;">🎯 زر الصفحة الرئيسية</h3>
       <label>نص الزر</label>
-      <input type="text" id="hb-text" value="${heroButtonData.text || 'تسوق الآن'}">
+      <input type="text" id="hb-text" value="${escapeHTML(heroButtonData.text || 'تسوق الآن')}">
       <label>الرابط</label>
-      <input type="text" id="hb-link" value="${heroButtonData.link || '#shop'}" placeholder="#shop أو #product-123">
+      <input type="text" id="hb-link" value="${escapeHTML(heroButtonData.link || '#shop')}" placeholder="#shop أو #product-123">
       <label>اللون</label>
-      <input type="text" id="hb-color" value="${heroButtonData.color || '#4A90E2'}">
+      <input type="text" id="hb-color" value="${escapeHTML(safeColor(heroButtonData.color))}">
       <button class="primary" onclick="saveHeroButton()">💾 حفظ الزر</button>
     </div>
   `;
@@ -785,15 +881,15 @@ function renderSectionsAdmin() {
       return `
         <div class="admin-section-card">
           <div class="info">
-            <strong>${sec.title || '(بدون عنوان)'}</strong>
-            <small><span class="type-badge" style="background:${typeInfo.color};">${typeInfo.label}</span> ${visibleLabel} — ${idx + 1}</small>
+            <strong>${escapeHTML(sec.title || '(بدون عنوان)')}</strong>
+            <small><span class="type-badge" style="background:${typeInfo.color};">${escapeHTML(typeInfo.label)}</span> ${visibleLabel} — ${idx + 1}</small>
           </div>
           <div class="actions">
-            <button class="btn-up" onclick="moveSection('${sec.id}', -1)">⬆️</button>
-            <button class="btn-down" onclick="moveSection('${sec.id}', 1)">⬇️</button>
-            <button class="btn-toggle" onclick="toggleSectionVisibility('${sec.id}')">${sec.visible === false ? '👁️‍🗨️' : '👁️'}</button>
-            <button class="btn-edit" onclick="openSectionEditor('${sec.id}')">✏️</button>
-            <button class="btn-delete" onclick="deleteSection('${sec.id}')">🗑️</button>
+            <button class="btn-up" onclick="moveSection('${encodedArg(sec.id)}', -1)">⬆️</button>
+            <button class="btn-down" onclick="moveSection('${encodedArg(sec.id)}', 1)">⬇️</button>
+            <button class="btn-toggle" onclick="toggleSectionVisibility('${encodedArg(sec.id)}')">${sec.visible === false ? '👁️‍🗨️' : '👁️'}</button>
+            <button class="btn-edit" onclick="openSectionEditor('${encodedArg(sec.id)}')">✏️</button>
+            <button class="btn-delete" onclick="deleteSection('${encodedArg(sec.id)}')">🗑️</button>
           </div>
         </div>
       `;
@@ -812,6 +908,7 @@ function renderSectionsAdmin() {
 }
 
 function openSectionEditor(sectionId) {
+  if (sectionId !== null && sectionId !== undefined) { try { sectionId = decodeURIComponent(sectionId); } catch (_) { return; } }
   editingSectionId = sectionId;
   const sec = sectionId ? dynamicSections.find(s => s.id === sectionId) : null;
   sectionImageBuffer = sec?.image || '';
@@ -826,7 +923,7 @@ function openSectionEditor(sectionId) {
     <div class="admin-form" style="margin-top:15px;">
       <h3 style="margin-top:0;">${sectionId ? '✏️ تعديل قسم' : '➕ قسم جديد'}</h3>
       <label>عنوان القسم</label>
-      <input type="text" id="sec-title" value="${sec?.title || ''}">
+      <input type="text" id="sec-title" value="${escapeHTML(sec?.title || '')}">
       <label>نوع القسم</label>
       <select id="sec-type" onchange="onSectionTypeChange()">${typeOptions}</select>
       <div id="sec-type-fields"></div>
@@ -856,15 +953,15 @@ function onSectionTypeChange() {
   if (['text', 'image', 'banner'].includes(type)) {
     html += `
       <label>صورة القسم</label>
-      <div class="img-preview-box" id="sec-img-preview" style="${sectionImageBuffer ? `background-image:url('${sectionImageBuffer}')` : ''}">${sectionImageBuffer ? '' : 'لا توجد'}</div>
+      <div class="img-preview-box" id="sec-img-preview" style="${safeImageURL(sectionImageBuffer) ? `background-image:url('${safeImageURL(sectionImageBuffer)}')` : ''}">${sectionImageBuffer ? '' : 'لا توجد'}</div>
       <input type="file" id="sec-img-file" accept="image/*" class="hidden-file" onchange="handleSectionImageUpload(this)">
       <label for="sec-img-file" class="img-upload-label">📷 اختر صورة</label>
       <label>محتوى نصي</label>
-      <textarea id="sec-content" rows="3">${sec?.content || ''}</textarea>
+      <textarea id="sec-content" rows="3">${escapeHTML(sec?.content || '')}</textarea>
       <label>نص الزر</label>
-      <input type="text" id="sec-btn-text" value="${sec?.buttonText || ''}">
+      <input type="text" id="sec-btn-text" value="${escapeHTML(sec?.buttonText || '')}">
       <label>رابط الزر</label>
-      <input type="text" id="sec-btn-link" value="${sec?.buttonLink || ''}" placeholder="#product-123">
+      <input type="text" id="sec-btn-link" value="${escapeHTML(sec?.buttonLink || '')}" placeholder="#product-123">
     `;
   }
   if (['grid', 'products'].includes(type)) {
@@ -878,6 +975,7 @@ function onSectionTypeChange() {
 
 async function handleSectionImageUpload(input) {
   const file = input.files[0]; if (!file) return;
+  if (!file.type?.startsWith('image/') || file.size > 8 * 1024 * 1024) return showMessage('اختر صورة صالحة بحجم أقل من 8MB.');
   try {
     const base64 = await compressImage(file, 800, 600);
     sectionImageBuffer = base64;
@@ -896,15 +994,15 @@ function renderSectionItems() {
   list.innerHTML = sectionItemsBuffer.map((item, i) => `
     <div class="item-editor">
       <div class="item-row">
-        <input type="text" placeholder="العنوان" value="${item.title || ''}" oninput="updateSectionItem(${i}, 'title', this.value)">
-        <input type="text" placeholder="الأيقونة" value="${item.icon || ''}" oninput="updateSectionItem(${i}, 'icon', this.value)" style="max-width:80px;">
+        <input type="text" placeholder="العنوان" value="${escapeHTML(item.title || '')}" oninput="updateSectionItem(${i}, 'title', this.value)">
+        <input type="text" placeholder="الأيقونة" value="${escapeHTML(item.icon || '')}" oninput="updateSectionItem(${i}, 'icon', this.value)" style="max-width:80px;">
       </div>
       <div class="item-row">
-        <input type="text" placeholder="الرابط" value="${item.link || ''}" oninput="updateSectionItem(${i}, 'link', this.value)">
-        <input type="text" placeholder="الوصف" value="${item.description || ''}" oninput="updateSectionItem(${i}, 'description', this.value)">
+        <input type="text" placeholder="الرابط" value="${escapeHTML(item.link || '')}" oninput="updateSectionItem(${i}, 'link', this.value)">
+        <input type="text" placeholder="الوصف" value="${escapeHTML(item.description || '')}" oninput="updateSectionItem(${i}, 'description', this.value)">
       </div>
       <div class="item-row">
-        <input type="text" placeholder="السعر" value="${item.price || ''}" oninput="updateSectionItem(${i}, 'price', this.value)">
+        <input type="text" placeholder="السعر" value="${escapeHTML(item.price || '')}" oninput="updateSectionItem(${i}, 'price', this.value)">
         <label class="img-upload-label" style="margin:0;padding:6px 10px;">
           📷<input type="file" accept="image/*" style="display:none;" onchange="handleSectionItemImage(${i}, this)">
         </label>
@@ -932,6 +1030,7 @@ function removeSectionItem(i) {
 
 async function handleSectionItemImage(i, input) {
   const file = input.files[0]; if (!file) return;
+  if (!file.type?.startsWith('image/') || file.size > 8 * 1024 * 1024) return showMessage('اختر صورة صالحة بحجم أقل من 8MB.');
   try {
     const base64 = await compressImage(file, 300, 300);
     sectionItemsBuffer[i].image = base64;
@@ -963,6 +1062,7 @@ async function saveSection() {
 }
 
 async function deleteSection(id) {
+  try { id = decodeURIComponent(id); } catch (_) { return; }
   if (!confirm('حذف هذا القسم؟')) return;
   const res = await apiCall('/api/sections/delete', { sectionId: id });
   if (res.ok) { tg.showAlert('تم الحذف ✅'); await loadDynamicSections(); openAdminPanel(); }
@@ -970,6 +1070,7 @@ async function deleteSection(id) {
 }
 
 async function toggleSectionVisibility(id) {
+  try { id = decodeURIComponent(id); } catch (_) { return; }
   const sec = dynamicSections.find(s => s.id === id);
   if (!sec) return;
   const res = await apiCall('/api/sections/toggle', { sectionId: id, visible: sec.visible === false });
@@ -978,6 +1079,7 @@ async function toggleSectionVisibility(id) {
 }
 
 async function moveSection(id, direction) {
+  try { id = decodeURIComponent(id); } catch (_) { return; }
   const sorted = [...dynamicSections].sort((a,b)=>(a.order||0)-(b.order||0));
   const idx = sorted.findIndex(s => s.id === id);
   if (idx === -1) return;
@@ -1029,18 +1131,19 @@ async function openAdminPanel() {
       if (p.prices?.ton > 0) pricesStr.push(`💎 ${p.prices.ton}`);
       if (p.prices?.stars > 0) pricesStr.push(`⭐ ${p.prices.stars}`);
       if (p.prices?.sar > 0) pricesStr.push(`🇸🇦 ${p.prices.sar}`);
-      const imgTag = p.image ? `<img src="${p.image}" style="width:50px;height:50px;border-radius:5px;object-fit:cover;margin-left:10px;">` : '';
-      const link = p.link || ('#product-' + p.id);
+      const productImage = safeImageURL(p.image);
+      const imgTag = productImage ? `<img src="${escapeHTML(productImage)}" alt="" style="width:50px;height:50px;border-radius:5px;object-fit:cover;margin-left:10px;">` : '';
+      const link = p.link && (String(p.link).startsWith('#') || safeWebURL(p.link)) ? p.link : ('#product-' + p.id);
       return `<div style="background:#152a47;padding:12px;margin-bottom:12px;border-radius:10px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div style="display:flex;align-items:center;flex:1;min-width:180px;">${imgTag}<div>
-          <strong style="color:white;">${p.name}</strong>
-          <div style="font-size:13px;color:#fff;">${pricesStr.join(' | ') || 'بدون سعر'}</div>
-          <div style="font-size:11px;color:#4AE2A0;">🔗 ${link}</div>
+          <strong style="color:white;">${escapeHTML(p.name)}</strong>
+          <div style="font-size:13px;color:#fff;">${escapeHTML(pricesStr.join(' | ') || 'بدون سعر')}</div>
+          <div style="font-size:11px;color:#4AE2A0;">🔗 ${escapeHTML(link)}</div>
         </div></div>
         <div style="display:flex;flex-direction:column;gap:5px;">
-          <button onclick="copyProductLinkFromAdmin('${p.id}')" style="background:#4A90E2;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">📋 نسخ</button>
-          <button onclick="editProductForm('${p.id}')" style="background:#f39c12;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">تعديل</button>
-          <button onclick="deleteProduct('${p.id}')" style="background:#e74c3c;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">حذف</button>
+          <button onclick="copyProductLinkFromAdmin('${encodedArg(p.id)}')" style="background:#4A90E2;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">📋 نسخ</button>
+          <button onclick="editProductForm('${encodedArg(p.id)}')" style="background:#f39c12;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">تعديل</button>
+          <button onclick="deleteProduct('${encodedArg(p.id)}')" style="background:#e74c3c;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">حذف</button>
         </div>
       </div>`;
     }).join('');
@@ -1052,10 +1155,10 @@ async function openAdminPanel() {
       const roleName = s.role === 'admin' ? 'مسؤول' : 'مشرف';
       const canEdit = userRole === 'owner' || (userRole === 'admin' && s.role === 'moderator');
       return `<div style="background:#152a47;padding:10px;margin-bottom:10px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
-        <div><strong style="color:white;">${s.name}</strong> <span style="color:#f39c12;font-size:12px;">(${roleName})</span><br><small style="color:#888;">ID: ${s.id}</small></div>
+        <div><strong style="color:white;">${escapeHTML(s.name)}</strong> <span style="color:#f39c12;font-size:12px;">(${roleName})</span><br><small style="color:#888;">ID: ${escapeHTML(s.id)}</small></div>
         ${canEdit ? `<div style="display:flex;gap:5px;">
-          ${s.role === 'moderator' && userRole === 'owner' ? `<button onclick="updateRole('${s.id}','admin')" style="background:#3498db;color:white;border:none;padding:5px 8px;border-radius:5px;font-size:11px;">ترقية</button>` : ''}
-          <button onclick="updateRole('${s.id}','user')" style="background:#e74c3c;color:white;border:none;padding:5px 8px;border-radius:5px;font-size:11px;">إزالة</button>
+          ${s.role === 'moderator' && userRole === 'owner' ? `<button onclick="updateRole('${encodedArg(s.id)}','admin')" style="background:#3498db;color:white;border:none;padding:5px 8px;border-radius:5px;font-size:11px;">ترقية</button>` : ''}
+          <button onclick="updateRole('${encodedArg(s.id)}','user')" style="background:#e74c3c;color:white;border:none;padding:5px 8px;border-radius:5px;font-size:11px;">إزالة</button>
         </div>` : ''}
       </div>`;
     }).join('');
@@ -1066,17 +1169,17 @@ async function openAdminPanel() {
     sliderHTML = sliderData.slides.map(s => `
       <div style="background:#152a47;padding:10px;margin-bottom:10px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;">
         <div style="display:flex;align-items:center;gap:10px;">
-          <img src="${s.image}" style="width:60px;height:40px;border-radius:5px;object-fit:cover;">
-          <strong style="color:white;font-size:14px;">${s.title || 'بدون عنوان'}</strong>
+          <img src="${escapeHTML(safeImageURL(s.image))}" alt="" style="width:60px;height:40px;border-radius:5px;object-fit:cover;">
+          <strong style="color:white;font-size:14px;">${escapeHTML(s.title || 'بدون عنوان')}</strong>
         </div>
-        <button onclick="deleteSlide('${s.id}')" style="background:#e74c3c;color:white;border:none;padding:5px 10px;border-radius:5px;font-size:12px;">حذف</button>
+        <button onclick="deleteSlide('${encodedArg(s.id)}')" style="background:#e74c3c;color:white;border:none;padding:5px 10px;border-radius:5px;font-size:12px;">حذف</button>
       </div>
     `).join('');
   } else if (userRole === 'owner') sliderHTML = '<p>لا توجد صور.</p>';
 
   const store = storeMenuLinks || {};
   const catOptions = currentCategories.filter(c => c.id !== 'all')
-    .map(c => `<option value="${c.id}">${c.icon || '📦'} ${c.name}</option>`).join('');
+    .map(c => `<option value="${escapeHTML(c.id)}">${escapeHTML(c.icon || '📦')} ${escapeHTML(c.name)}</option>`).join('');
 
   content.innerHTML = `
     <div style="background:#112238;padding:15px;border-radius:10px;margin-bottom:20px;">
@@ -1135,10 +1238,10 @@ async function openAdminPanel() {
       <hr style="border-color:#333;margin:20px 0;">
       <div style="background:#112238;padding:15px;border-radius:10px;margin-bottom:20px;">
         <h3 style="margin-top:0;color:white;">روابط الأقسام القديمة</h3>
-        <input type="text" id="link-telegram" value="${store.telegram || ''}" placeholder="تيليجرام" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
-        <input type="text" id="link-nft" value="${store.nft || ''}" placeholder="NFT" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
-        <input type="text" id="link-social" value="${store.social || ''}" placeholder="تواصل" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
-        <input type="text" id="link-games" value="${store.games || ''}" placeholder="ألعاب" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
+        <input type="text" id="link-telegram" value="${escapeHTML(store.telegram || '')}" placeholder="تيليجرام" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
+        <input type="text" id="link-nft" value="${escapeHTML(store.nft || '')}" placeholder="NFT" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
+        <input type="text" id="link-social" value="${escapeHTML(store.social || '')}" placeholder="تواصل" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
+        <input type="text" id="link-games" value="${escapeHTML(store.games || '')}" placeholder="ألعاب" style="width:100%;padding:10px;margin-bottom:8px;border-radius:5px;border:none;">
         <button onclick="saveMenuLinks()" style="background:#8A2BE2;color:white;padding:12px;width:100%;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">حفظ</button>
       </div>
     ` : ''}
@@ -1192,6 +1295,7 @@ async function addProduct() {
 }
 
 async function editProductForm(id) {
+  try { id = decodeURIComponent(id); } catch (_) { return; }
   const data = await apiCall('/api/products');
   const product = data.products.find(p => p.id === id);
   if(!product) return;
@@ -1237,6 +1341,7 @@ async function saveEdit(id) {
 }
 
 async function deleteProduct(id) {
+  try { id = decodeURIComponent(id); } catch (_) { return; }
   if(!confirm('حذف هذا المنتج؟')) return;
   const res = await apiCall('/api/products/delete', { productId: id });
   if(res.ok) openAdminPanel(); else alert(res.error);
@@ -1251,6 +1356,7 @@ async function promoteUser() {
 }
 
 async function updateRole(targetId, newRole) {
+  try { targetId = decodeURIComponent(targetId); } catch (_) { return; }
   if(!confirm('تعديل الرتبة؟')) return;
   const res = await apiCall('/api/users/update-role', { targetId, newRole });
   if(res.ok) { tg.showAlert('تم التحديث ✅'); openAdminPanel(); } else tg.showAlert(res.error);
@@ -1311,7 +1417,7 @@ function renderCategoriesBar() {
   allCats.forEach(cat => {
     const chip = document.createElement('div');
     chip.className = 'cat-chip' + (shopState.category === cat.id ? ' active' : '');
-    chip.innerHTML = `${cat.icon || '📦'} ${cat.name}`;
+    chip.textContent = `${cat.icon || '📦'} ${cat.name || ''}`;
     chip.onclick = () => { shopState.category = cat.id; renderCategoriesBar(); applyShopFilters(); };
     bar.appendChild(chip);
   });
@@ -1361,39 +1467,32 @@ function applyShopFilters() {
 function renderShopProducts(products) {
   const content = document.getElementById('shop-content');
   if (!content) return;
-  if (!products || products.length === 0) {
-    content.innerHTML = '<div class="shop-empty">لا توجد منتجات مطابقة 🔍</div>';
-    return;
+  content.replaceChildren();
+  if (!Array.isArray(products) || products.length === 0) {
+    const empty = document.createElement('div'); empty.className = 'shop-empty'; empty.textContent = 'لا توجد منتجات مطابقة 🔍'; content.appendChild(empty); return;
   }
-  const grid = document.createElement('div');
-  grid.className = 'shop-grid';
+  const grid = document.createElement('div'); grid.className = 'shop-grid';
   products.forEach(p => {
-    const card = document.createElement('div');
-    card.className = 'shop-card';
-    card.onclick = () => openProduct(p.id);
-    let badgeHTML = '';
-    if (p.discount > 0) badgeHTML = `<div class="card-badge discount">🔥 -${p.discount}%</div>`;
-    else if (p.badge === 'new') badgeHTML = `<div class="card-badge new">⚡ جديد</div>`;
-    else if (p.badge === 'featured') badgeHTML = `<div class="card-badge featured">⭐ مميز</div>`;
-    const pricesStr = formatPrices(p.prices);
-    const catName = currentCategories.find(c => c.id === p.category)?.name || '';
-    card.innerHTML = `
-      <div class="card-img-wrap">
-        ${badgeHTML}
-        ${p.image ? `<img src="${p.image}" class="card-img" alt="">` : `<div class="card-img-placeholder">📦</div>`}
-      </div>
-      <div class="card-body">
-        <strong>${p.name || 'بدون اسم'}</strong>
-        <small>${p.description || ''}</small>
-        <div class="card-price-row">
-          <span class="card-price">${pricesStr || '—'}</span>
-          ${catName ? `<span class="card-cat">${catName}</span>` : ''}
-        </div>
-      </div>
-    `;
-    grid.appendChild(card);
+    const card = document.createElement('div'); card.className = 'shop-card';
+    card.addEventListener('click', () => openProduct(p.id));
+    const imageWrap = document.createElement('div'); imageWrap.className = 'card-img-wrap';
+    if (Number(p.discount) > 0 || ['new','featured'].includes(p.badge)) {
+      const badge = document.createElement('div');
+      badge.className = Number(p.discount) > 0 ? 'card-badge discount' : `card-badge ${p.badge}`;
+      badge.textContent = Number(p.discount) > 0 ? `🔥 -${Math.min(99, Number(p.discount) || 0)}%` : (p.badge === 'new' ? '⚡ جديد' : '⭐ مميز');
+      imageWrap.appendChild(badge);
+    }
+    const imageURL = safeImageURL(p.image);
+    if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.className = 'card-img'; img.alt = p.name || ''; imageWrap.appendChild(img); }
+    else { const placeholder = document.createElement('div'); placeholder.className = 'card-img-placeholder'; placeholder.textContent = '📦'; imageWrap.appendChild(placeholder); }
+    const body = document.createElement('div'); body.className = 'card-body';
+    const name = document.createElement('strong'); name.textContent = p.name || 'بدون اسم';
+    const desc = document.createElement('small'); desc.textContent = p.description || '';
+    const priceRow = document.createElement('div'); priceRow.className = 'card-price-row';
+    const price = document.createElement('span'); price.className = 'card-price'; price.textContent = formatPrices(p.prices) || '—';
+    const cat = document.createElement('span'); cat.className = 'card-cat'; cat.textContent = currentCategories.find(c => c.id === p.category)?.name || '';
+    priceRow.append(price, cat); body.append(name, desc, priceRow); card.append(imageWrap, body); grid.appendChild(card);
   });
-  content.innerHTML = '';
   content.appendChild(grid);
 }
 
@@ -1421,53 +1520,45 @@ async function openProduct(productId) {
 async function loadProductPage(productId) {
   const content = document.getElementById('product-content');
   if (!content) return;
-  content.innerHTML = '<div class="shop-empty">جاري التحميل...</div>';
-
-  let product = currentShopProducts.find(p => p.id === productId);
+  content.textContent = 'جاري التحميل...';
+  let product = currentShopProducts.find(p => String(p.id) === String(productId));
   if (!product) {
-    const res = await apiCall('/api/products/get', { productId });
-    if (res.ok && res.product) product = res.product;
+    try { const res = await apiCall('/api/products/get', { productId }); if (res.ok && res.product) product = res.product; }
+    catch (error) { console.error(error); }
   }
-  if (!product) {
-    content.innerHTML = '<div class="shop-empty">❌ المنتج غير موجود</div>';
-    return;
+  if (!product) { content.textContent = '❌ المنتج غير موجود'; return; }
+  content.replaceChildren();
+  const hero = document.createElement('div'); hero.className = 'product-hero';
+  const imageURL = safeImageURL(product.image);
+  if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.alt = product.name || ''; hero.appendChild(img); }
+  else { const placeholder = document.createElement('div'); placeholder.className = 'hero-placeholder'; placeholder.textContent = '📦'; hero.appendChild(placeholder); }
+  const info = document.createElement('div'); info.className = 'product-info';
+  if (Number(product.discount) > 0 || ['new','featured'].includes(product.badge)) {
+    const badge = document.createElement('span'); badge.className = Number(product.discount) > 0 ? 'card-badge discount' : `card-badge ${product.badge}`;
+    badge.style.cssText = 'position:static;display:inline-block;margin-bottom:8px;';
+    badge.textContent = Number(product.discount) > 0 ? `🔥 خصم ${Math.min(99, Number(product.discount) || 0)}%` : (product.badge === 'new' ? '⚡ جديد' : '⭐ مميز'); info.appendChild(badge);
   }
-
-  const pricesStr = formatPrices(product.prices);
-  const catName = currentCategories.find(c => c.id === product.category)?.name || '';
-  let badgeHTML = '';
-  if (product.discount > 0) badgeHTML = `<span class="card-badge discount" style="position:static;display:inline-block;margin-bottom:8px;">🔥 خصم ${product.discount}%</span>`;
-  else if (product.badge === 'new') badgeHTML = `<span class="card-badge new" style="position:static;display:inline-block;margin-bottom:8px;">⚡ جديد</span>`;
-  else if (product.badge === 'featured') badgeHTML = `<span class="card-badge featured" style="position:static;display:inline-block;margin-bottom:8px;">⭐ مميز</span>`;
-
-  content.innerHTML = `
-    <div class="product-hero">
-      ${product.image ? `<img src="${product.image}" alt="">` : `<div class="hero-placeholder">📦</div>`}
-    </div>
-    <div class="product-info">
-      ${badgeHTML}
-      <h2>${product.name || 'بدون اسم'}</h2>
-      ${catName ? `<div style="color:#8A2BE2;font-size:12px;margin-bottom:8px;">🏷️ ${catName}</div>` : ''}
-      ${product.description ? `<p>${product.description}</p>` : ''}
-      ${pricesStr ? `<div class="product-prices">
-             ${product.prices.usd > 0 ? `<span class="price-chip">دولار: <strong>$${product.prices.usd}</strong></span>` : ''}
-             ${product.prices.ton > 0 ? `<span class="price-chip">TON: <strong>${product.prices.ton}</strong></span>` : ''}
-             ${product.prices.stars > 0 ? `<span class="price-chip">نجوم: <strong>${product.prices.stars}</strong></span>` : ''}
-             ${product.prices.sar > 0 ? `<span class="price-chip">ريال: <strong>${product.prices.sar}</strong></span>` : ''}
-           </div>` : ''}
-      <button class="product-buy-btn" onclick="buyProduct('${product.id}')">🛒 اطلب الآن</button>
-      <button class="product-share-btn" onclick="copyProductLink('${product.id}')">🔗 نسخ رابط المنتج</button>
-    </div>
-  `;
+  const title = document.createElement('h2'); title.textContent = product.name || 'بدون اسم'; info.appendChild(title);
+  const categoryName = currentCategories.find(c => c.id === product.category)?.name || '';
+  if (categoryName) { const cat = document.createElement('div'); cat.style.cssText = 'color:#8A2BE2;font-size:12px;margin-bottom:8px;'; cat.textContent = `🏷️ ${categoryName}`; info.appendChild(cat); }
+  if (product.description) { const desc = document.createElement('p'); desc.textContent = product.description; info.appendChild(desc); }
+  const prices = product.prices || {};
+  const priceEntries = [['usd','دولار','$'],['ton','TON',''],['stars','نجوم',''],['sar','ريال','']].filter(([key]) => Number(prices[key]) > 0);
+  if (priceEntries.length) { const priceBox = document.createElement('div'); priceBox.className = 'product-prices'; priceEntries.forEach(([key,label,prefix]) => { const chip = document.createElement('span'); chip.className = 'price-chip'; chip.textContent = `${label}: ${prefix}${prices[key]}`; priceBox.appendChild(chip); }); info.appendChild(priceBox); }
+  const buy = document.createElement('button'); buy.className = 'product-buy-btn'; buy.textContent = '🛒 اطلب الآن'; buy.addEventListener('click', () => buyProduct(product.id));
+  const share = document.createElement('button'); share.className = 'product-share-btn'; share.textContent = '🔗 نسخ رابط المنتج'; share.addEventListener('click', () => copyProductLink(product.id));
+  info.append(buy, share); content.append(hero, info);
 }
 
 function buyProduct(productId) {
-  apiCall('/api/products/increment-sold', { productId }).catch(() => {});
+  const product = currentShopProducts.find(p => String(p.id) === String(productId));
+  if (!product) return showMessage('المنتج غير متاح حالياً.');
+  showMessage('تم اختيار المنتج. لإتمام الطلب، تواصل مع إدارة المتجر. لن تُحتسب المبيعة إلا بعد تأكيد الدفع.');
 }
 
 function copyProductLink(productId) {
   const product = currentShopProducts.find(p => p.id === productId);
-  const internalLink = product?.link || ('#product-' + productId);
+  const internalLink = product?.link && (String(product.link).startsWith('#') || safeWebURL(product.link)) ? product.link : ('#product-' + productId);
   navigator.clipboard.writeText(internalLink).then(() => {
     if (tg && tg.showAlert) tg.showAlert('تم نسخ الرابط الداخلي ✅\n\n' + internalLink + '\n\n(يعمل داخل التطبيق)');
     else alert('الرابط:\n' + internalLink);
@@ -1478,6 +1569,7 @@ function copyProductLink(productId) {
 }
 
 function copyProductLinkFromAdmin(productId) {
+  try { productId = decodeURIComponent(productId); } catch (_) { return; }
   copyProductLink(productId);
 }
 
@@ -1495,16 +1587,19 @@ function showEmptyPage(title, icon, message) {
     emptyPage.id = 'page-dynamic-empty';
     emptyPage.className = 'page';
     emptyPage.style.cssText = 'background:#0A192F;min-height:100vh;padding:30px 20px;align-items:center;justify-content:center;text-align:center;color:white;flex-direction:column;';
-    document.body.insertBefore(emptyPage, document.getElementById('page-admin'));
+    const adminPage = document.getElementById('page-admin');
+    document.body.insertBefore(emptyPage, adminPage || null);
   }
-  emptyPage.innerHTML = `
-    <div style="font-size:60px;margin-bottom:20px;">${icon}</div>
-    <h2 style="color:white;margin:0 0 10px;">${title}</h2>
-    <p style="color:#a0c4ff;font-size:14px;margin:0 0 30px;">${message}</p>
-    <button onclick="goHome()" style="background:linear-gradient(90deg,#4A90E2,#8A2BE2);color:white;border:none;padding:12px 30px;border-radius:12px;font-weight:bold;cursor:pointer;">🏠 العودة للرئيسية</button>
-  `;
+  emptyPage.replaceChildren();
+  const iconEl = document.createElement('div'); iconEl.style.cssText = 'font-size:60px;margin-bottom:20px;'; iconEl.textContent = icon;
+  const titleEl = document.createElement('h2'); titleEl.style.cssText = 'color:white;margin:0 0 10px;'; titleEl.textContent = title;
+  const messageEl = document.createElement('p'); messageEl.style.cssText = 'color:#a0c4ff;font-size:14px;margin:0 0 30px;'; messageEl.textContent = message;
+  const button = document.createElement('button'); button.textContent = '🏠 العودة للرئيسية';
+  button.style.cssText = 'background:linear-gradient(90deg,#4A90E2,#8A2BE2);color:white;border:none;padding:12px 30px;border-radius:12px;font-weight:bold;cursor:pointer;';
+  button.addEventListener('click', goHome);
+  emptyPage.append(iconEl, titleEl, messageEl, button);
   emptyPage.classList.add('active');
-  document.getElementById('page-nav').classList.add('active');
+  safeAddActive('page-nav');
 }
 
 function openFavorites() { showEmptyPage('المفضلة', '❤️', 'لا توجد منتجات في المفضلة بعد'); }
@@ -1526,4 +1621,11 @@ function returnToNav() {
   safeRemoveActive('page-empty');
   safeAddActive('page-home');
   safeAddActive('page-nav');
+}
+
+// تهيئة التطبيق والتحقق من هوية المستخدم عند تحميل الصفحة.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', fetchUserRole, { once: true });
+} else {
+  fetchUserRole();
 }
