@@ -127,6 +127,7 @@ async function fetchUserRole() {
     if (!data?.ok || !data.user) throw new Error(data?.error || 'تعذر التحقق من الحساب');
     userRole = ['owner', 'admin', 'moderator', 'user'].includes(data.user.role) ? data.user.role : 'user';
     userInfo = data.user;
+    console.info('DAYO account verified:', { id: data.user.id, role: data.user.role });
     if (nav1Initialized) initNav1();
     await Promise.allSettled([
       loadStoreData(), loadSlider(), loadDynamicSections(), loadCategories(),
