@@ -28,6 +28,40 @@ let quickIcons = [];
 let heroButtonData = { text: 'تسوق الآن', link: '#shop', color: '#4A90E2' };
 let realStats = { totalUsers: 0, onlineUsers: 0, totalProducts: 0, totalSold: 0 };
 
+
+/* ===== إعدادات المظهر: داكن / فاتح ===== */
+function applyTheme(theme, persist = true) {
+  const selected = theme === 'light' ? 'light' : 'dark';
+  document.body.dataset.theme = selected;
+  document.documentElement.style.colorScheme = selected;
+  const button = document.getElementById('theme-toggle');
+  if (button) {
+    button.textContent = selected === 'dark' ? '☀️' : '🌙';
+    button.setAttribute('aria-label', selected === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن');
+    button.title = selected === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن';
+  }
+  if (persist) {
+    try { localStorage.setItem('dayo-theme', selected); } catch (_) {}
+  }
+  if (tg?.setHeaderColor) {
+    try { tg.setHeaderColor(selected === 'dark' ? '#080e1d' : '#f3f6fc'); } catch (_) {}
+  }
+  if (tg?.setBackgroundColor) {
+    try { tg.setBackgroundColor(selected === 'dark' ? '#050914' : '#f3f6fc'); } catch (_) {}
+  }
+}
+
+function toggleTheme() {
+  const next = document.body.dataset.theme === 'light' ? 'dark' : 'light';
+  applyTheme(next, true);
+}
+
+(function initTheme() {
+  let saved = 'dark';
+  try { saved = localStorage.getItem('dayo-theme') || 'dark'; } catch (_) {}
+  applyTheme(saved, false);
+})();
+
 const SECTION_TYPES = {
   grid:     { label: 'شبكة أيقونات (4 أزرار)', color: '#4A90E2' },
   text:     { label: 'قسم نصي',                 color: '#8A2BE2' },
