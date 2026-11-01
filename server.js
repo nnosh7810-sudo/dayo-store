@@ -135,7 +135,7 @@ function verifyTelegramData(initData, botToken) {
   const dataCheckString = Array.from(urlParams.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}=${value}`)
-    .join('\\n');
+    .join('\n');
 
   const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
   const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest();
@@ -227,7 +227,13 @@ app.post('/api/me', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     res.json({ ok: true, user });
-  } catch (err) { res.status(401).json({ ok: false }); }
+  } catch (err) {
+    console.error('فشل التحقق من Telegram في /api/me:', err);
+    res.status(401).json({
+      ok: false,
+      error: err?.message || 'تعذر التحقق من بيانات تيليجرام'
+    });
+  }
 });
 
 // ✅ إحصائيات حقيقية
