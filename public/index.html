@@ -631,10 +631,82 @@
     body[data-theme="light"] .dayo-total-row { border-color:#e1e8f2; }
     @media(max-width:420px) { .dayo-cart-item { gap:8px; padding:10px; } .dayo-cart-image { width:54px;height:54px; } .dayo-line-total { font-size:10px; } .dayo-page-head h2 { font-size:17px; } }
 
+
+    /* ===== DAYO V2: القائمة الجانبية ومركز الإشعارات ===== */
+    .dayo-menu-toggle {
+      position:fixed; z-index:12001; top:calc(env(safe-area-inset-top, 0px) + 10px); left:62px;
+      width:42px;height:42px;border-radius:14px;border:1px solid var(--dy-border);
+      background:rgba(17,26,46,.94);color:var(--dy-text);display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:4px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.22);
+      -webkit-tap-highlight-color:transparent;
+    }
+    .dayo-menu-toggle span { width:17px;height:2px;border-radius:2px;background:currentColor;display:block; }
+    body[data-theme="light"] .dayo-menu-toggle { background:rgba(255,255,255,.96);color:#263852;border-color:#dce4f0; }
+    body.dayo-drawer-open { overflow:hidden; }
+    .dayo-menu-overlay { position:fixed;inset:0;z-index:12010;background:rgba(2,7,18,.58);backdrop-filter:blur(3px);opacity:0;visibility:hidden;transition:opacity .22s,visibility .22s; }
+    .dayo-menu-overlay.visible { opacity:1;visibility:visible; }
+    .dayo-side-drawer { position:fixed;z-index:12011;top:0;right:0;width:min(86vw,360px);height:100dvh;padding:calc(env(safe-area-inset-top,0px) + 14px) 16px calc(env(safe-area-inset-bottom,0px) + 14px);background:var(--dy-surface);color:var(--dy-text);border-left:1px solid var(--dy-border);box-shadow:-18px 0 55px rgba(0,0,0,.25);transform:translateX(105%);transition:transform .26s cubic-bezier(.2,.8,.2,1);display:flex;flex-direction:column;gap:16px;overflow:hidden; }
+    .dayo-side-drawer.open { transform:translateX(0); }
+    .dayo-drawer-head { display:flex;align-items:center;justify-content:space-between;padding:5px 2px 15px;border-bottom:1px solid var(--dy-border); }
+    .dayo-drawer-head div,.dayo-notifications-head div { display:flex;flex-direction:column;gap:3px; }
+    .dayo-drawer-head strong { font-size:22px;letter-spacing:2px;font-weight:900; }
+    .dayo-drawer-head small,.dayo-notifications-head small { color:var(--dy-muted);font-size:11px; }
+    .dayo-drawer-head button,.dayo-notifications-head button { border:1px solid var(--dy-border);background:var(--dy-surface-2);color:var(--dy-text);border-radius:10px;width:36px;height:36px;font-size:22px;cursor:pointer; }
+    .dayo-drawer-main { display:flex;flex-direction:column;gap:7px; }
+    .dayo-drawer-main.hidden,.dayo-drawer-notifications.hidden { display:none!important; }
+    .dayo-drawer-item { display:flex;align-items:center;gap:12px;width:100%;min-height:54px;padding:9px 11px;border:1px solid transparent;border-radius:13px;background:transparent;color:var(--dy-text);font:inherit;text-align:right;cursor:pointer; }
+    .dayo-drawer-item:active,.dayo-drawer-item:hover { background:var(--dy-surface-2);border-color:var(--dy-border); }
+    .dayo-drawer-item-icon { width:34px;height:34px;display:grid;place-items:center;border-radius:11px;background:var(--dy-surface-2);font-size:18px;color:#6ca7ff; }
+    .dayo-drawer-item > span:nth-child(2) { flex:1;font-size:14px;font-weight:700; }
+    .dayo-drawer-arrow { color:var(--dy-muted);font-size:22px; }
+    .dayo-notification-count { min-width:21px;height:21px;padding:0 6px;border-radius:20px;background:#e34d68;color:white;font-size:10px;font-weight:800;display:grid;place-items:center; }
+    .dayo-notification-count.hidden { display:none; }
+    .dayo-drawer-notifications { display:flex;flex-direction:column;min-height:0;flex:1; }
+    .dayo-notifications-head { display:flex;align-items:center;gap:10px;padding-bottom:13px;border-bottom:1px solid var(--dy-border); }
+    .dayo-notifications-head div { flex:1; }
+    .dayo-notifications-head strong { font-size:16px; }
+    .dayo-notifications-list { overflow:auto;min-height:0;flex:1;padding:8px 0; }
+    .dayo-notification-item { display:flex;align-items:flex-start;gap:10px;width:100%;padding:12px 8px;border:0;border-bottom:1px solid var(--dy-border);background:transparent;color:var(--dy-text);font:inherit;text-align:right;cursor:pointer; }
+    .dayo-notification-item.unread { background:rgba(74,144,226,.08); }
+    .dayo-notification-icon { flex:0 0 34px;width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:var(--dy-surface-2);font-weight:900;color:#69a5ff; }
+    .dayo-notification-icon.type-success { color:#16a36a;background:rgba(22,163,106,.12); }
+    .dayo-notification-icon.type-warning { color:#d58b18;background:rgba(213,139,24,.13); }
+    .dayo-notification-icon.type-offer { color:#8a63dc;background:rgba(138,99,220,.13); }
+    .dayo-notification-copy { display:flex;flex-direction:column;gap:5px;flex:1;min-width:0; }
+    .dayo-notification-copy strong { font-size:12px; }
+    .dayo-notification-copy small { color:var(--dy-muted);font-size:11px;line-height:1.6; }
+    .dayo-notification-copy time { color:var(--dy-muted);font-size:9px; }
+    .dayo-unread-dot { width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#4a90e2;margin-top:6px; }
+    .dayo-notifications-empty { min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--dy-muted);gap:9px;padding:20px; }
+    .dayo-notifications-empty div { font-size:30px; }
+    .dayo-notifications-empty strong { color:var(--dy-text);font-size:14px; }
+    .dayo-notifications-empty p { margin:0;font-size:11px; }
+    .dayo-drawer-foot { margin-top:auto;padding:13px 4px 3px;border-top:1px solid var(--dy-border);font-size:11px;font-weight:900;letter-spacing:1px; }
+    .dayo-drawer-foot span { display:block;margin-top:4px;color:var(--dy-muted);font-size:10px;font-weight:400;letter-spacing:0; }
+    @media(max-width:380px) { .dayo-menu-toggle { left:53px;width:38px;height:38px; } }
+
   </style>
 </head>
 <body>
   <button id="theme-toggle" class="theme-toggle" type="button" aria-label="تفعيل الوضع الفاتح" title="تغيير المظهر" onclick="toggleTheme()">☀️</button>
+  <button id="dayo-menu-toggle" class="dayo-menu-toggle" type="button" aria-label="فتح القائمة" title="القائمة" onclick="openSideMenu()"><span></span><span></span><span></span></button>
+  <div id="dayo-menu-overlay" class="dayo-menu-overlay" onclick="closeSideMenu()" aria-hidden="true"></div>
+  <aside id="dayo-side-drawer" class="dayo-side-drawer" aria-label="قائمة DAYO">
+    <div class="dayo-drawer-head"><div><strong>DAYO</strong><small>مركز التحكم والتحديثات</small></div><button type="button" onclick="closeSideMenu()" aria-label="إغلاق">×</button></div>
+    <nav id="dayo-drawer-main" class="dayo-drawer-main">
+      <button class="dayo-drawer-item" onclick="openNotifications()"><span class="dayo-drawer-item-icon">🔔</span><span>الإشعارات</span><b id="dayo-notification-count" class="dayo-notification-count hidden">0</b><span class="dayo-drawer-arrow">‹</span></button>
+      <button class="dayo-drawer-item" onclick="drawerNavigate('home')"><span class="dayo-drawer-item-icon">⌂</span><span>الرئيسية</span><span class="dayo-drawer-arrow">‹</span></button>
+      <button class="dayo-drawer-item" onclick="drawerNavigate('shop')"><span class="dayo-drawer-item-icon">▦</span><span>تصفح المتجر</span><span class="dayo-drawer-arrow">‹</span></button>
+      <button class="dayo-drawer-item" onclick="drawerNavigate('cart')"><span class="dayo-drawer-item-icon">🛒</span><span>سلة المشتريات</span><span class="dayo-drawer-arrow">‹</span></button>
+      <button class="dayo-drawer-item" onclick="drawerNavigate('orders')"><span class="dayo-drawer-item-icon">▤</span><span>طلباتي</span><span class="dayo-drawer-arrow">‹</span></button>
+      <button class="dayo-drawer-item" id="dayo-drawer-admin" onclick="drawerNavigate('admin')"><span class="dayo-drawer-item-icon">⚙</span><span>لوحة التحكم</span><span class="dayo-drawer-arrow">‹</span></button>
+    </nav>
+    <section id="dayo-drawer-notifications" class="dayo-drawer-notifications hidden">
+      <div class="dayo-notifications-head"><button type="button" onclick="showDrawerMenu()">‹</button><div><strong>الإشعارات</strong><small>آخر تحديثات المتجر وطلباتك</small></div><button type="button" onclick="openNotifications()" title="تحديث">↻</button></div>
+      <div id="dayo-notifications-list" class="dayo-notifications-list"></div>
+    </section>
+    <div class="dayo-drawer-foot">DAYO STORE <span>تجربة تسوق أكثر ذكاءً</span></div>
+  </aside>
 
   <!-- شاشة الشاحنة -->
   <div id="page-truck" class="page active">
