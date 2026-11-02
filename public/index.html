@@ -572,6 +572,65 @@
       *, *::before, *::after { scroll-behavior:auto!important; transition-duration:.01ms!important; animation-duration:.01ms!important; }
     }
 
+
+    /* ===== DAYO ORDERS V1 ===== */
+    .dayo-dynamic-page { box-sizing:border-box; width:100%; min-height:100vh; padding:clamp(14px,3vw,28px); padding-bottom:110px; gap:16px; color:#f4f7ff; background:linear-gradient(160deg,#0b1428,#050914 75%); }
+    .dayo-dynamic-page * { box-sizing:border-box; }
+    .dayo-page-head { display:flex; align-items:center; gap:12px; width:100%; max-width:900px; margin:0 auto 8px; }
+    .dayo-page-head > div { flex:1; min-width:0; }
+    .dayo-page-head h2 { margin:0; font-size:20px; color:inherit; }
+    .dayo-page-head small,.dayo-muted { color:#9db0ce; font-size:12px; }
+    .dayo-back,.dayo-secondary { border:1px solid #2b3d5d; color:inherit; background:#14233d; border-radius:11px; padding:10px 14px; font:inherit; cursor:pointer; }
+    .dayo-back { font-size:24px; line-height:1; min-width:42px; }
+    .dayo-primary { display:block; width:100%; border:0; border-radius:12px; padding:14px 16px; margin-top:12px; background:linear-gradient(90deg,#4A90E2,#8A2BE2); color:white; font:inherit; font-weight:800; text-align:center; text-decoration:none; cursor:pointer; }
+    .dayo-primary:disabled { opacity:.45; cursor:not-allowed; }
+    .dayo-cart-list,.dayo-orders-list,.dayo-checkout-card,.dayo-empty-cart,.dayo-order-success { width:100%; max-width:900px; margin-inline:auto; }
+    .dayo-cart-list,.dayo-orders-list { display:grid; gap:10px; }
+    .dayo-cart-item,.dayo-order-card,.dayo-checkout-card,.dayo-empty-cart,.dayo-order-success { border:1px solid #243653; background:#101d33; border-radius:16px; padding:14px; }
+    .dayo-cart-item { display:flex; align-items:center; gap:12px; min-width:0; }
+    .dayo-cart-image { width:68px; height:68px; border-radius:12px; object-fit:cover; flex:none; background:#1a2c49; }
+    .dayo-cart-placeholder { display:grid; place-items:center; font-size:28px; }
+    .dayo-cart-info { flex:1; min-width:0; }
+    .dayo-cart-info strong { display:block; overflow-wrap:anywhere; font-size:14px; }
+    .dayo-cart-info small { display:block; color:#9db0ce; margin-top:4px; font-size:11px; }
+    .dayo-line-total { font-size:12px; white-space:nowrap; color:#4AE2A0; }
+    .dayo-quantity { display:flex; align-items:center; gap:8px; margin-top:9px; }
+    .dayo-quantity button { min-width:28px; height:28px; border:1px solid #304665; border-radius:8px; background:#1b2d49; color:white; font-size:16px; cursor:pointer; }
+    .dayo-quantity .dayo-remove { border:0; background:transparent; color:#ff7777; font-size:11px; margin-inline-start:4px; }
+    .dayo-checkout-card h3 { margin:0 0 14px; }
+    .dayo-checkout-card label { display:block; margin:12px 0 6px; font-size:12px; color:#b6c7e2; }
+    .dayo-checkout-card select,.dayo-checkout-card input { display:block; width:100%; padding:12px; border-radius:10px; border:1px solid #304665; background:#0b1629; color:inherit; font:inherit; }
+    .dayo-total-row { display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid #2a3d5b; padding-top:12px; margin-top:14px; }
+    .dayo-total-row strong { color:#4AE2A0; }
+    .dayo-payment-note { margin-top:12px; padding:12px; border-radius:10px; background:#172b47; color:inherit; font-size:12px; line-height:1.8; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .dayo-payment-note p { margin:5px 0 0; }
+    .dayo-warning { color:#ffbd69; font-size:12px; line-height:1.7; }
+    .dayo-empty-cart,.dayo-order-success { text-align:center; margin-top:20px; padding:26px 18px; }
+    .dayo-empty-cart > div,.dayo-success-icon { font-size:44px; }
+    .dayo-empty-cart p,.dayo-order-success p { color:#9db0ce; font-size:13px; line-height:1.7; }
+    .dayo-order-code { display:block; font-size:19px; letter-spacing:1px; color:#4AE2A0; padding:12px; border:1px dashed #365477; border-radius:10px; overflow-wrap:anywhere; }
+    .dayo-success-icon { width:62px; height:62px; display:grid; place-items:center; border-radius:50%; margin:0 auto 12px; background:rgba(74,226,160,.14); color:#4AE2A0; }
+    .dayo-order-card { text-align:right; }
+    .dayo-order-card-head { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+    .dayo-order-lines { margin:10px 0; color:#b7c7df; font-size:12px; line-height:1.8; }
+    .dayo-status { display:inline-block; border-radius:20px; padding:4px 9px; font-size:10px; background:#33445f; color:white; }
+    .status-paid,.status-completed { background:rgba(34,160,107,.2); color:#58dfa5; }
+    .status-awaiting_payment,.status-processing { background:rgba(243,156,18,.18); color:#ffc56d; }
+    .status-cancelled,.status-rejected { background:rgba(231,76,60,.18); color:#ff8c83; }
+    .dayo-checkout-link { margin:12px 0; }
+    .dayo-page-loading { max-width:900px; width:100%; margin:40px auto; text-align:center; color:#a9bddc; }
+    body[data-theme="light"] .dayo-dynamic-page { color:#17243a; background:#f3f6fc; }
+    body[data-theme="light"] .dayo-muted,body[data-theme="light"] .dayo-page-head small { color:#64748b; }
+    body[data-theme="light"] .dayo-back,body[data-theme="light"] .dayo-secondary { background:#fff; border-color:#dce4f0; color:#253650; }
+    body[data-theme="light"] .dayo-cart-item,body[data-theme="light"] .dayo-order-card,body[data-theme="light"] .dayo-checkout-card,body[data-theme="light"] .dayo-empty-cart,body[data-theme="light"] .dayo-order-success { background:#fff; border-color:#dce4f0; box-shadow:0 5px 20px rgba(35,55,90,.05); }
+    body[data-theme="light"] .dayo-cart-info small,body[data-theme="light"] .dayo-order-lines { color:#64748b; }
+    body[data-theme="light"] .dayo-quantity button { background:#f1f5fb; border-color:#dce4f0; color:#253650; }
+    body[data-theme="light"] .dayo-checkout-card label { color:#52637b; }
+    body[data-theme="light"] .dayo-checkout-card select,body[data-theme="light"] .dayo-checkout-card input { background:#fff; border-color:#dce4f0; color:#17243a; }
+    body[data-theme="light"] .dayo-payment-note { background:#eef4fc; color:#253650; }
+    body[data-theme="light"] .dayo-total-row { border-color:#e1e8f2; }
+    @media(max-width:420px) { .dayo-cart-item { gap:8px; padding:10px; } .dayo-cart-image { width:54px;height:54px; } .dayo-line-total { font-size:10px; } .dayo-page-head h2 { font-size:17px; } }
+
   </style>
 </head>
 <body>
