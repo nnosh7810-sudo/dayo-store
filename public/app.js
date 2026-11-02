@@ -32,12 +32,15 @@ let realStats = { totalUsers: 0, onlineUsers: 0, totalProducts: 0, totalSold: 0 
 let cartItems = [];
 let cartCurrency = 'sar';
 let cartPaymentMethod = 'manual';
-let cartPaymentSettings = { manualEnabled: true, manualInstructions: '', electronicEnabled: false, electronicCheckoutUrl: '' };
+let cartPaymentSettings = { manualEnabled: true, manualInstructions: '', manualPaymentUsername: '', cryptoEnabled: false, starsEnabled: true };
+let notificationPoller = null;
+let currentNotifications = [];
+let sideDrawerView = 'menu';
 try { const savedCart = JSON.parse(localStorage.getItem('dayo-cart') || '[]'); if (Array.isArray(savedCart)) cartItems = savedCart.filter(x => x && typeof x.productId === 'string' && Number.isInteger(x.quantity) && x.quantity > 0 && x.quantity <= 20); } catch (_) { cartItems = []; }
 
 function saveCart() { try { localStorage.setItem('dayo-cart', JSON.stringify(cartItems)); } catch (_) {} }
-function currencyLabel(currency) { return ({ sar: 'ريال سعودي', usd: 'دولار أمريكي', ton: 'TON', stars: 'نجوم تيليجرام' })[currency] || currency; }
-function currencySymbol(currency) { return ({ sar: 'ر.س', usd: '$', ton: 'TON', stars: '⭐' })[currency] || currency; }
+function currencyLabel(currency) { return ({ sar: 'ريال سعودي', usd: 'USDT على شبكة TON', ton: 'عملة TON', stars: 'نجوم تيليجرام' })[currency] || currency; }
+function currencySymbol(currency) { return ({ sar: 'ر.س', usd: 'USDT', ton: 'TON', stars: '⭐' })[currency] || currency; }
 function money(value, currency) { return `${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: currency === 'stars' ? 0 : 6 })} ${currencySymbol(currency)}`; }
 function cartCount() { return cartItems.reduce((sum, item) => sum + item.quantity, 0); }
 function discountedPrice(product, currency) { const raw = Number(product?.prices?.[currency] || 0); return raw > 0 ? raw * (1 - Math.min(100, Math.max(0, Number(product.discount) || 0)) / 100) : 0; }
@@ -183,6 +186,8 @@ async function fetchUserRole() {
       loadQuickIcons(), loadRealStats()
     ]);
     await loadHomeProducts();
+    loadNotificationCount();
+    if (!notificationPoller) notificationPoller = setInterval(loadNotificationCount, 30000);
   } catch (err) {
     console.error('فشل التحقق من المستخدم:', err);
     userRole = 'user';
@@ -1350,7 +1355,7 @@ async function openAdminPanel() {
         <div id="image-preview" style="width:40px;height:40px;border-radius:5px;background:#0d1526;background-size:cover;background-position:center;display:inline-block;vertical-align:middle;margin-right:8px;text-align:center;line-height:40px;color:#666;font-size:10px;">لا توجد</div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-        <input type="number" id="price-usd" placeholder="دولار $" style="padding:8px;border-radius:5px;border:none;">
+        <input type="number" id="price-usd" placeholder="USDT" style="padding:8px;border-radius:5px;border:none;">
         <input type="number" id="price-ton" placeholder="TON" style="padding:8px;border-radius:5px;border:none;">
         <input type="number" id="price-stars" placeholder="نجوم ⭐" style="padding:8px;border-radius:5px;border:none;">
         <input type="number" id="price-sar" placeholder="ريال 🇸🇦" style="padding:8px;border-radius:5px;border:none;">
@@ -1793,13 +1798,17 @@ async function openCart() {
 function renderCartPage() {
   const page = ensureDayoDynamicPage();
   const validItems = cartItems.map(item => ({ ...item, product: currentShopProducts.find(p => String(p.id) === item.productId) })).filter(item => item.product);
-  const currencies = ['sar', 'usd', 'ton', 'stars'].filter(currency => validItems.length && validItems.every(item => Number(item.product.prices?.[currency]) > 0));
+  const currencies = ['sar', 'usd', 'ton', 'stars'].filter(currency => {
+    const enabled = currency === 'sar'
+      ? cartPaymentSettings.manualEnabled && !!cartPaymentSettings.manualPaymentUsername
+      : currency === 'usd'
+        ? cartPaymentSettings.cryptoEnabled && cartPaymentSettings.cryptoUsdtEnabled !== false
+        : currency === 'ton'
+          ? cartPaymentSettings.cryptoEnabled && cartPaymentSettings.cryptoTonEnabled !== false
+          : cartPaymentSettings.starsEnabled;
+    return enabled && validItems.length && validItems.every(item => Number(item.product.prices?.[currency]) > 0);
+  });
   if (!currencies.includes(cartCurrency)) cartCurrency = currencies.includes('sar') ? 'sar' : (currencies[0] || 'sar');
-  const paymentOptions = [];
-  if (cartPaymentSettings.manualEnabled) paymentOptions.push('<option value="manual">تحويل يدوي</option>');
-  if (cartPaymentSettings.electronicEnabled && cartPaymentSettings.electronicCheckoutUrl) paymentOptions.push('<option value="electronic">دفع إلكتروني</option>');
-  if (!paymentOptions.some(option => option.includes(`value="${cartPaymentMethod}"`))) cartPaymentMethod = cartPaymentSettings.manualEnabled ? 'manual' : 'electronic';
-
   const itemsHTML = validItems.map(({ product, quantity }) => {
     const unit = discountedPrice(product, cartCurrency);
     const image = safeImageURL(product.image);
@@ -1812,18 +1821,22 @@ function renderCartPage() {
   }).join('');
   const subtotal = validItems.reduce((sum, item) => sum + discountedPrice(item.product, cartCurrency) * item.quantity, 0);
   const noCurrency = validItems.length > 0 && currencies.length === 0;
-  const checkoutDisabled = !validItems.length || noCurrency || !paymentOptions.length;
-
+  const paymentInfo = cartCurrency === 'sar'
+    ? `<div class="dayo-payment-note"><strong>الدفع اليدوي بالريال السعودي</strong><p>سيظهر لك حساب الدفع ورقم طلبك بعد إنشاء الطلب. حوّل المبلغ إلى الحساب المحدد، ثم انتظر تأكيد الإدارة.</p></div>`
+    : cartCurrency === 'stars'
+      ? `<div class="dayo-payment-note"><strong>الدفع التلقائي عبر Telegram Stars</strong><p>سيظهر لك مستطيل الدفع الرسمي من تيليجرام. بعد نجاح الدفع سيتم تأكيد الطلب تلقائيًا.</p></div>`
+      : `<div class="dayo-payment-note"><strong>الدفع التلقائي عبر Crypto Pay</strong><p>سيتم إنشاء فاتورة ${cartCurrency === 'ton' ? 'TON' : 'USDT على شبكة TON'} خاصة بطلبك، ويتأكد الدفع تلقائيًا بعد وصول إشعار موثوق من مزود الدفع.</p></div>`;
+  const providerUnavailable = cartCurrency === 'sar' ? !cartPaymentSettings.manualEnabled || !cartPaymentSettings.manualPaymentUsername : (['ton', 'usd'].includes(cartCurrency) ? !cartPaymentSettings.cryptoEnabled : !cartPaymentSettings.starsEnabled);
+  const checkoutDisabled = !validItems.length || noCurrency || providerUnavailable;
   page.innerHTML = `<div class="dayo-page-head"><button class="dayo-back" onclick="goHome()">‹</button><div><h2>سلة المشتريات</h2><small>${cartCount()} منتج</small></div><button class="dayo-secondary" onclick="openMyOrders()">طلباتي</button></div>
     ${validItems.length ? `<div class="dayo-cart-list">${itemsHTML}</div>
       <section class="dayo-checkout-card"><h3>إتمام الطلب</h3>
         <label>عملة الدفع</label><select id="cart-currency" onchange="changeCartCurrency(this.value)" ${noCurrency ? 'disabled' : ''}>${currencies.map(currency => `<option value="${currency}" ${currency === cartCurrency ? 'selected' : ''}>${escapeHTML(currencyLabel(currency))}</option>`).join('')}</select>
         ${noCurrency ? '<p class="dayo-warning">لا توجد عملة مشتركة مسعّرة لجميع المنتجات في السلة. أزل بعض المنتجات أو اختر منتجات لها عملة مشتركة.</p>' : ''}
         <div class="dayo-total-row"><span>الإجمالي</span><strong>${money(subtotal, cartCurrency)}</strong></div>
-        <label>طريقة الدفع</label><select id="cart-payment-method" onchange="changeCartPaymentMethod(this.value)" ${paymentOptions.length ? '' : 'disabled'}>${paymentOptions.join('')}</select>
-        ${cartPaymentMethod === 'manual' ? `<div class="dayo-payment-note"><strong>تعليمات التحويل</strong><p>${escapeHTML(cartPaymentSettings.manualInstructions || 'ستظهر تعليمات التحويل بعد إنشاء الطلب.')}</p></div>` : '<p class="dayo-muted">بعد إنشاء الطلب سيظهر لك رابط بوابة الدفع. يبقى الطلب بانتظار تأكيد الإدارة حتى يتم ربط التحقق الآلي بمزود الدفع.</p>'}
-        <button class="dayo-primary" onclick="submitCartOrder()" ${checkoutDisabled ? 'disabled' : ''}>تأكيد وإنشاء الطلب</button>
-        ${!paymentOptions.length ? '<p class="dayo-warning">لم يفعّل المتجر وسيلة دفع بعد. تواصل مع الإدارة.</p>' : ''}
+        ${paymentInfo}
+        ${providerUnavailable ? `<p class="dayo-warning">${cartCurrency === 'sar' ? 'لم يحدد المتجر حساب استقبال الدفع اليدوي بعد.' : (['ton','usd'].includes(cartCurrency) ? 'الدفع التلقائي للعملات الرقمية غير مهيأ من الخادم بعد.' : 'دفع Telegram Stars غير متاح حاليًا.')}</p>` : ''}
+        <button class="dayo-primary" onclick="submitCartOrder()" ${checkoutDisabled ? 'disabled' : ''}>إنشاء الطلب والمتابعة للدفع</button>
       </section>` : `<div class="dayo-empty-cart"><div>🛒</div><h3>سلتك فارغة</h3><p>أضف المنتجات التي ترغب بشرائها، وستظهر هنا.</p><button class="dayo-primary" onclick="openShop()">تصفح المنتجات</button><button class="dayo-secondary" onclick="openMyOrders()">عرض طلباتي</button></div>`}`;
 }
 
@@ -1837,22 +1850,58 @@ async function submitCartOrder() {
   try {
     const response = await apiCall('/api/orders/create', {
       items: cartItems.map(item => ({ productId: item.productId, quantity: item.quantity })),
-      currency: cartCurrency, paymentMethod: cartPaymentMethod
+      currency: cartCurrency
     });
     if (!response.ok || !response.order) throw new Error(response.error || 'تعذر إنشاء الطلب');
     cartItems = []; saveCart();
     const order = response.order;
     const page = ensureDayoDynamicPage();
+    const manual = order.paymentMethod === 'manual';
+    const stars = order.paymentMethod === 'stars';
+    const paymentBlock = manual
+      ? `<div class="dayo-payment-note"><strong>حوّل المبلغ إلى حساب الدفع</strong><p>حساب الاستقبال:</p><a class="dayo-primary dayo-checkout-link" href="https://t.me/${encodeURIComponent(order.manualPaymentUsername || '')}" target="_blank" rel="noopener noreferrer">@${escapeHTML(order.manualPaymentUsername || 'لم يتم ضبط الحساب')}</a>${order.paymentInstructions ? `<p>${escapeHTML(order.paymentInstructions)}</p>` : ''}<p>أرسل رقم الطلب <b>${escapeHTML(order.orderCode)}</b> إلى حساب الدفع لتسهيل المطابقة.</p><button class="dayo-primary" onclick="notifyManualPayment('${encodedArg(order.id)}')">أشعرت المتجر بإتمام التحويل</button><small class="dayo-muted">لن يتأكد الطلب إلا بعد تحقق الإدارة من وصول المبلغ.</small></div>`
+      : stars
+        ? `<div class="dayo-payment-note"><strong>ادفع عبر Telegram Stars</strong><p>اضغط الزر لفتح نافذة الدفع الرسمية داخل تيليجرام. سيتم تأكيد طلبك تلقائيًا بعد نجاح العملية.</p><button class="dayo-primary" onclick="openTelegramInvoice('${encodedArg(response.checkoutUrl || '')}')">⭐ الدفع الآن</button></div>`
+        : `<div class="dayo-payment-note"><strong>أكمل الدفع عبر ${order.currency === 'ton' ? 'TON' : 'USDT على TON'}</strong><p>فاتورة آمنة مرتبطة برقم طلبك. بعد الدفع سيصل تأكيد مزود الدفع ويُحدّث الطلب تلقائيًا.</p><button class="dayo-primary" onclick="openCryptoInvoice('${encodedArg(response.checkoutUrl || '')}')">فتح فاتورة الدفع</button></div>`;
     page.innerHTML = `<div class="dayo-order-success"><div class="dayo-success-icon">✓</div><h2>تم إنشاء طلبك</h2><p>رقم الطلب</p><strong class="dayo-order-code">${escapeHTML(order.orderCode)}</strong><div class="dayo-total-row"><span>الإجمالي</span><strong>${money(order.total, order.currency)}</strong></div>
-      <p class="dayo-muted">حالة الطلب: بانتظار الدفع. لن يتم احتساب المبيعة قبل تأكيد الدفع من الإدارة.</p>
-      ${order.paymentInstructions ? `<div class="dayo-payment-note"><strong>تعليمات التحويل</strong><p>${escapeHTML(order.paymentInstructions)}</p></div>` : ''}
-      ${response.checkoutUrl ? `<a class="dayo-primary dayo-checkout-link" href="${escapeHTML(safeWebURL(response.checkoutUrl))}" target="_blank" rel="noopener noreferrer">الانتقال إلى بوابة الدفع</a>` : ''}
-      <div class="dayo-payment-note"><strong>بعد إتمام الدفع</strong><p>أدخل رقم العملية أو مرجع التحويل ليتمكن فريق DAYO من مراجعة الدفع.</p><input id="order-payment-reference" type="text" maxlength="300" placeholder="رقم العملية / مرجع التحويل"><button class="dayo-primary" onclick="submitOrderPaymentReference('${encodedArg(order.id)}')">إرسال مرجع الدفع</button></div>
+      <p class="dayo-muted">حالة الطلب: بانتظار الدفع. سيُحدّث النظام الحالة بعد التحقق من الدفع.</p>
+      ${paymentBlock}
       <button class="dayo-secondary" onclick="openMyOrders()">متابعة طلباتي</button><button class="dayo-secondary" onclick="openShop()">العودة للمتجر</button></div>`;
+    loadNotificationCount();
   } catch (error) {
     showMessage(error.message || 'حدث خطأ أثناء إنشاء الطلب.');
     renderCartPage();
   }
+}
+
+function openCryptoInvoice(encodedUrl) {
+  let url = ''; try { url = decodeURIComponent(encodedUrl); } catch (_) { url = encodedUrl; }
+  if (!url) return showMessage('رابط فاتورة الدفع غير متوفر.');
+  if (tg?.openTelegramLink && /^https:\/\/t\.me\//i.test(url)) tg.openTelegramLink(url);
+  else if (tg?.openLink) tg.openLink(url);
+  else window.open(url, '_blank', 'noopener');
+}
+
+function openTelegramInvoice(encodedUrl) {
+  let url = '';
+  try { url = decodeURIComponent(encodedUrl); } catch (_) { url = encodedUrl; }
+  if (!url) return showMessage('رابط فاتورة Stars غير متوفر.');
+  if (tg?.openInvoice) {
+    tg.openInvoice(url, status => {
+      if (status === 'paid') { showMessage('تم الدفع بنجاح.'); openMyOrders(); }
+      else if (status === 'failed') showMessage('تعذر إتمام الدفع. حاول مجددًا.');
+    });
+  } else if (tg?.openTelegramLink) tg.openTelegramLink(url);
+  else window.open(url, '_blank', 'noopener');
+}
+
+async function notifyManualPayment(orderId) {
+  try { orderId = decodeURIComponent(orderId); } catch (_) {}
+  const response = await apiCall('/api/orders/notify-manual-payment', { orderId });
+  if (response.ok) {
+    showMessage('تم إرسال إشعار الدفع. طلبك الآن بانتظار تأكيد حساب الاستقبال.');
+    openMyOrders();
+  } else showMessage(response.error || 'تعذر إرسال إشعار الدفع.');
 }
 
 async function submitOrderPaymentReference(orderId) {
@@ -1862,6 +1911,87 @@ async function submitOrderPaymentReference(orderId) {
   const response = await apiCall('/api/orders/submit-reference', { orderId, reference });
   if (response.ok) showMessage('تم إرسال مرجع الدفع. سيقوم فريق المتجر بمراجعته.');
   else showMessage(response.error || 'تعذر إرسال المرجع.');
+}
+
+/* ===== مركز إشعارات DAYO والقائمة الجانبية ===== */
+function openSideMenu() {
+  const overlay = document.getElementById('dayo-menu-overlay');
+  const drawer = document.getElementById('dayo-side-drawer');
+  if (!overlay || !drawer) return;
+  sideDrawerView = 'menu';
+  document.getElementById('dayo-drawer-main')?.classList.remove('hidden');
+  document.getElementById('dayo-drawer-notifications')?.classList.add('hidden');
+  overlay.classList.add('visible'); drawer.classList.add('open');
+  document.body.classList.add('dayo-drawer-open');
+  loadNotificationCount();
+}
+function closeSideMenu() {
+  document.getElementById('dayo-menu-overlay')?.classList.remove('visible');
+  document.getElementById('dayo-side-drawer')?.classList.remove('open');
+  document.body.classList.remove('dayo-drawer-open');
+}
+function updateNotificationBadge(count) {
+  const badge = document.getElementById('dayo-notification-count');
+  if (!badge) return;
+  const n = Math.max(0, Number(count) || 0);
+  badge.textContent = n > 99 ? '99+' : String(n);
+  badge.classList.toggle('hidden', n === 0);
+}
+async function loadNotificationCount() {
+  try {
+    const response = await apiCall('/api/notifications/mine');
+    if (!response.ok) return;
+    currentNotifications = Array.isArray(response.notifications) ? response.notifications : [];
+    updateNotificationBadge(response.unread || 0);
+    if (sideDrawerView === 'notifications') renderNotificationsList(currentNotifications);
+  } catch (_) {}
+}
+function renderNotificationsList(list) {
+  const container = document.getElementById('dayo-notifications-list');
+  if (!container) return;
+  if (!list.length) {
+    container.innerHTML = '<div class="dayo-notifications-empty"><div>🔔</div><strong>لا توجد إشعارات</strong><p>ستظهر هنا تحديثات طلباتك وعروض DAYO.</p></div>';
+    return;
+  }
+  container.innerHTML = list.map(item => {
+    const unread = !item.readAt;
+    const icon = item.type === 'success' ? '✓' : item.type === 'warning' ? '!' : item.type === 'offer' ? '★' : '•';
+    return `<button class="dayo-notification-item ${unread ? 'unread' : ''}" onclick="openNotificationItem('${encodedArg(item.id)}','${encodedArg(item.link || 'orders')}')"><span class="dayo-notification-icon type-${escapeHTML(item.type)}">${icon}</span><span class="dayo-notification-copy"><strong>${escapeHTML(item.title)}</strong><small>${escapeHTML(item.body)}</small><time>${item.createdAt ? new Date(item.createdAt).toLocaleString('ar-SA') : ''}</time></span>${unread ? '<i class="dayo-unread-dot"></i>' : ''}</button>`;
+  }).join('');
+}
+async function openNotifications() {
+  sideDrawerView = 'notifications';
+  document.getElementById('dayo-drawer-main')?.classList.add('hidden');
+  document.getElementById('dayo-drawer-notifications')?.classList.remove('hidden');
+  const list = document.getElementById('dayo-notifications-list');
+  if (list) list.innerHTML = '<div class="dayo-notifications-empty">جاري تحميل الإشعارات...</div>';
+  await loadNotificationCount();
+  await apiCall('/api/notifications/read', {}).catch(() => null);
+  currentNotifications = currentNotifications.map(item => ({ ...item, readAt: item.readAt || new Date().toISOString() }));
+  updateNotificationBadge(0);
+  renderNotificationsList(currentNotifications);
+}
+function showDrawerMenu() {
+  sideDrawerView = 'menu';
+  document.getElementById('dayo-drawer-main')?.classList.remove('hidden');
+  document.getElementById('dayo-drawer-notifications')?.classList.add('hidden');
+}
+async function openNotificationItem(encodedId, encodedLink = 'orders') {
+  let id = '', link = 'orders'; try { id = decodeURIComponent(encodedId); } catch (_) { id = encodedId; }
+  try { link = decodeURIComponent(encodedLink); } catch (_) { link = encodedLink; }
+  await apiCall('/api/notifications/read', { ids: [id] }).catch(() => null);
+  closeSideMenu();
+  if (link === 'admin-orders' && ['owner','admin'].includes(userRole)) openAdminPanel();
+  else if (link === 'shop') openShop();
+  else openMyOrders();
+}
+function drawerNavigate(target) {
+  closeSideMenu();
+  if (target === 'home') goHome();
+  else if (target === 'shop') openShop();
+  else if (target === 'cart') openCart();
+  else if (target === 'orders') openMyOrders();
+  else if (target === 'admin' && ['owner','admin'].includes(userRole)) openAdminPanel();
 }
 
 const ORDER_STATUS_TEXT = { awaiting_payment: 'بانتظار الدفع', paid: 'تم تأكيد الدفع', processing: 'قيد التنفيذ', completed: 'مكتمل', cancelled: 'ملغي', rejected: 'مرفوض' };
@@ -1874,7 +2004,7 @@ async function openMyOrders() {
     if (!response.ok) throw new Error(response.error || 'تعذر تحميل الطلبات');
     const orders = Array.isArray(response.orders) ? response.orders : [];
     page.innerHTML = `<div class="dayo-page-head"><button class="dayo-back" onclick="openCart()">‹</button><div><h2>طلباتي</h2><small>${orders.length} طلب</small></div><button class="dayo-secondary" onclick="openCart()">السلة</button></div>
-      ${orders.length ? `<div class="dayo-orders-list">${orders.map(order => `<article class="dayo-order-card"><div class="dayo-order-card-head"><strong>${escapeHTML(order.orderCode || 'طلب')}</strong><span class="dayo-status status-${escapeHTML(order.status)}">${escapeHTML(ORDER_STATUS_TEXT[order.status] || order.status)}</span></div>
+      ${orders.length ? `<div class="dayo-orders-list">${orders.map(order => `<article class="dayo-order-card"><div class="dayo-order-card-head"><strong>${escapeHTML(order.orderCode || 'طلب')}</strong><span class="dayo-status status-${escapeHTML(order.status)}">${escapeHTML(order.status === 'awaiting_payment' && order.paymentNotified ? 'تم إشعار الدفع – بانتظار تأكيد الحساب' : (ORDER_STATUS_TEXT[order.status] || order.status))}</span></div>
         <div class="dayo-order-lines">${(order.items || []).map(item => `<div>${escapeHTML(item.name)} × ${Number(item.quantity) || 1}</div>`).join('')}</div>
         <div class="dayo-total-row"><span>${escapeHTML(currencyLabel(order.currency))}</span><strong>${money(order.total, order.currency)}</strong></div>
         <small class="dayo-muted">${order.createdAt ? new Date(order.createdAt).toLocaleString('ar-SA') : ''}</small>
@@ -1883,13 +2013,27 @@ async function openMyOrders() {
 }
 
 function renderPaymentSettingsAdmin(settings = {}) {
-  return `<hr style="border-color:#333;margin:20px 0;"><section class="admin-form"><h3>إعدادات الدفع والطلبات</h3>
-    <label><input id="pay-manual-enabled" type="checkbox" ${settings.manualEnabled !== false ? 'checked' : ''}> تفعيل التحويل اليدوي</label>
-    <label>تعليمات التحويل التي تظهر للعميل</label><textarea id="pay-manual-instructions" rows="4" placeholder="اسم البنك، رقم الحساب أو المحفظة...">${escapeHTML(settings.manualInstructions || '')}</textarea>
-    <label><input id="pay-electronic-enabled" type="checkbox" ${settings.electronicEnabled === true ? 'checked' : ''}> تفعيل رابط الدفع الإلكتروني</label>
-    <label>رابط بوابة الدفع (HTTPS)</label><input id="pay-electronic-url" type="text" value="${escapeHTML(settings.electronicCheckoutUrl || '')}" placeholder="https://...">
-    <p style="font-size:11px;color:#a0c4ff;line-height:1.7">تنبيه: رابط الدفع الخارجي لا يؤكد الدفع تلقائيًا في هذه النسخة؛ يجب على الإدارة مراجعة العملية وتحديث حالة الطلب. الربط الآلي يحتاج تكامل API وWebhook مع مزود الدفع.</p>
-    <button class="primary" onclick="savePaymentSettings()">حفظ إعدادات الدفع</button></section>`;
+  const safeBase = escapeHTML(settings.publicBaseUrl || '');
+  return `<hr style="border-color:#333;margin:20px 0;"><section class="admin-form" id="dayo-payment-settings"><h3>إعدادات الدفع والتحصيل</h3>
+    <h4>الدفع اليدوي – الريال السعودي</h4>
+    <label><input id="pay-manual-enabled" type="checkbox" ${settings.manualEnabled !== false ? 'checked' : ''}> تفعيل الدفع اليدوي بالريال</label>
+    <label>يوزر حساب استقبال الدفع</label><input id="pay-manual-username" type="text" value="${escapeHTML(settings.manualPaymentUsername || '')}" placeholder="مثال: DAYO_PAY">
+    <label>تعليمات التحويل (اختياري)</label><textarea id="pay-manual-instructions" rows="3" placeholder="اكتب تعليمات التحويل ورقم الطلب">${escapeHTML(settings.manualInstructions || '')}</textarea>
+    <hr style="border-color:#333;margin:16px 0;"><h4>الدفع التلقائي – Crypto Pay</h4>
+    <label><input id="pay-crypto-enabled" type="checkbox" ${settings.cryptoEnabled ? 'checked' : ''}> تفعيل الدفع التلقائي بالعملات الرقمية</label>
+    <label><input id="pay-crypto-ton-enabled" type="checkbox" ${settings.cryptoTonEnabled !== false ? 'checked' : ''}> قبول TON</label>
+    <label><input id="pay-crypto-usdt-enabled" type="checkbox" ${settings.cryptoUsdtEnabled !== false ? 'checked' : ''}> قبول USDT على شبكة TON</label>
+    <label><input id="pay-crypto-webhook-configured" type="checkbox" ${settings.cryptoWebhookConfigured ? 'checked' : ''}> أكدت أنني ضبطت Webhook داخل تطبيق @CryptoBot</label>
+    <label>Crypto Pay API Token</label><input id="pay-crypto-token" type="password" autocomplete="new-password" placeholder="${settings.cryptoTokenConfigured ? 'مفتاح محفوظ؛ اكتب قيمة جديدة للاستبدال' : 'ألصق API Token من CryptoBot'}">
+    <small class="dayo-muted">${settings.cryptoTokenConfigured ? 'يوجد مفتاح محفوظ ومشفّر على الخادم.' : 'لم يتم إعداد مفتاح Crypto Pay بعد.'} لن يظهر المفتاح المحفوظ في لوحة التحكم.</small>
+    <label>رابط المتجر العام HTTPS</label><input id="pay-public-base-url" type="url" value="${safeBase}" placeholder="https://your-domain.com">
+    <button type="button" class="dayo-secondary" onclick="testCryptoPaymentConnection()">اختبار اتصال Crypto Pay</button>
+    <div class="dayo-payment-note"><strong>رابط Webhook الخاص بـ Crypto Pay</strong><p id="pay-crypto-webhook-url">${escapeHTML(settings.cryptoWebhookUrl || 'سيظهر بعد إدخال رابط المتجر وحفظ الإعدادات')}</p><button type="button" class="dayo-secondary" onclick="copyPaymentWebhook('crypto')">نسخ رابط Webhook</button><small>يجب وضع هذا الرابط في إعدادات تطبيقك داخل @CryptoBot؛ لا يمكن للخادم ضبط إعدادات تطبيق Crypto Pay نيابةً عنك.</small></div>
+    <hr style="border-color:#333;margin:16px 0;"><h4>Telegram Stars</h4>
+    <label><input id="pay-stars-enabled" type="checkbox" ${settings.starsEnabled ? 'checked' : ''}> تفعيل الدفع عبر Telegram Stars</label>
+    <div class="dayo-payment-note"><strong>Webhook تيليجرام</strong><p>${settings.telegramWebhookReady ? 'تم إنشاء إعدادات Webhook.' : 'سيتم إنشاء سر Webhook تلقائيًا عند حفظ الإعدادات.'}</p><p id="pay-telegram-webhook-url">${escapeHTML(settings.telegramWebhookUrl || 'سيظهر بعد إدخال رابط المتجر وحفظ الإعدادات')}</p><button type="button" class="dayo-secondary" onclick="copyPaymentWebhook('telegram')">نسخ رابط Webhook</button><button type="button" class="dayo-primary" onclick="setupStarsWebhook()">ربط Telegram Stars الآن</button><small>لن يتم استبدال Webhook آخر موجود للبوت؛ إذا كان البوت مربوطًا بنظام آخر سنوقف العملية وننبهك.</small></div>
+    <p style="font-size:11px;color:#a0c4ff;line-height:1.7">تُحفظ مفاتيح الدفع مشفّرة في قاعدة البيانات ولا تُرسل إلى المتصفح. إعداد Crypto Pay يحتاج إضافة رابط Webhook من لوحة @CryptoBot بعد الحفظ.</p>
+    <button class="primary" onclick="savePaymentSettings()">حفظ جميع إعدادات الدفع</button></section>`;
 }
 
 function renderOrdersAdmin(orders = []) {
@@ -1897,7 +2041,7 @@ function renderOrdersAdmin(orders = []) {
   const cards = orders.map(order => `<article class="admin-section-card" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>${escapeHTML(order.orderCode || 'طلب')}</strong><b>${money(order.total, order.currency)}</b></div>
     <div style="font-size:12px;color:#a0c4ff;margin:7px 0">العميل: ${escapeHTML(order.customerName || 'عميل')} · ID: ${escapeHTML(order.userId || '')}</div>
     <div style="font-size:12px;color:#fff;margin-bottom:7px">${(order.items || []).map(item => `${escapeHTML(item.name)} × ${Number(item.quantity) || 1}`).join('، ')}</div>
-    <div style="font-size:12px;color:#a0c4ff;margin-bottom:8px">الدفع: ${order.paymentMethod === 'electronic' ? 'إلكتروني خارجي' : 'تحويل يدوي'} · مرجع: ${escapeHTML(order.paymentReference || '—')}</div>
+    <div style="font-size:12px;color:#a0c4ff;margin-bottom:8px">الدفع: ${order.paymentMethod === 'manual' ? 'تحويل يدوي – SAR' : order.paymentMethod === 'cryptopay' ? (order.currency === 'ton' ? 'Crypto Pay – TON' : 'Crypto Pay – USDT على TON') : order.paymentMethod === 'stars' ? 'Telegram Stars' : 'وسيلة أخرى'} · ${order.paymentMethod === 'manual' ? (order.paymentNotified ? 'العميل أشعر بالتحويل – يلزم التحقق' : 'بانتظار التحويل') : (order.paymentStatus === 'paid' ? 'مدفوع تلقائيًا' : 'بانتظار تأكيد مزود الدفع')}</div>
     <div style="display:flex;gap:7px;flex-wrap:wrap"><select id="order-status-${escapeHTML(order.id)}" style="flex:1;min-width:150px;padding:9px;border-radius:7px">${statuses.map(([key,label]) => `<option value="${key}" ${key === order.status ? 'selected' : ''}>${label}</option>`).join('')}</select><button onclick="updateOrderStatus('${encodedArg(order.id)}')" style="background:#4A90E2;color:#fff;border:0;border-radius:7px;padding:8px 12px">حفظ الحالة</button></div>
   </article>`).join('');
   return `<hr style="border-color:#333;margin:20px 0;"><section><h3 style="color:inherit">إدارة الطلبات (${orders.length})</h3><button onclick="refreshAdminOrders()" style="background:#315d91;color:#fff;border:0;padding:8px 12px;border-radius:7px;margin-bottom:10px">تحديث الطلبات</button>${cards || '<p>لا توجد طلبات حتى الآن.</p>'}</section>`;
@@ -1907,11 +2051,42 @@ async function savePaymentSettings() {
   const payload = {
     manualEnabled: !!document.getElementById('pay-manual-enabled')?.checked,
     manualInstructions: document.getElementById('pay-manual-instructions')?.value || '',
-    electronicEnabled: !!document.getElementById('pay-electronic-enabled')?.checked,
-    electronicCheckoutUrl: document.getElementById('pay-electronic-url')?.value || ''
+    manualPaymentUsername: document.getElementById('pay-manual-username')?.value || '',
+    cryptoEnabled: !!document.getElementById('pay-crypto-enabled')?.checked,
+    cryptoTonEnabled: !!document.getElementById('pay-crypto-ton-enabled')?.checked,
+    cryptoUsdtEnabled: !!document.getElementById('pay-crypto-usdt-enabled')?.checked,
+    cryptoWebhookConfigured: !!document.getElementById('pay-crypto-webhook-configured')?.checked,
+    cryptoPayApiToken: document.getElementById('pay-crypto-token')?.value || '',
+    publicBaseUrl: document.getElementById('pay-public-base-url')?.value || '',
+    starsEnabled: !!document.getElementById('pay-stars-enabled')?.checked
   };
   const response = await apiCall('/api/payments/settings/save', payload);
-  if (response.ok) showMessage('تم حفظ إعدادات الدفع.'); else showMessage(response.error || 'تعذر حفظ الإعدادات.');
+  if (response.ok) { showMessage('تم حفظ إعدادات الدفع بنجاح.'); openAdminPanel(); }
+  else showMessage(response.error || 'تعذر حفظ الإعدادات.');
+}
+
+async function testCryptoPaymentConnection() {
+  const token = document.getElementById('pay-crypto-token')?.value || '';
+  const response = await apiCall('/api/payments/crypto/test', { token });
+  if (response.ok) showMessage(`الاتصال ناجح: ${response.appName || 'Crypto Pay'}`);
+  else showMessage(response.error || 'فشل اختبار الاتصال.');
+}
+
+async function copyPaymentWebhook(kind) {
+  const base = document.getElementById('pay-public-base-url')?.value?.trim().replace(/\/$/, '') || '';
+  if (!/^https:\/\//i.test(base)) return showMessage('أدخل رابط المتجر HTTPS أولًا.');
+  const url = `${base}${kind === 'crypto' ? '/api/cryptopay/webhook' : '/api/telegram/webhook'}`;
+  try { await navigator.clipboard.writeText(url); showMessage('تم نسخ رابط Webhook.'); }
+  catch (_) { showMessage(url); }
+}
+
+async function setupStarsWebhook() {
+  const base = document.getElementById('pay-public-base-url')?.value?.trim() || '';
+  if (!/^https:\/\//i.test(base)) return showMessage('احفظ رابط المتجر HTTPS أولًا.');
+  const result = await apiCall('/api/payments/telegram-webhook/setup', {});
+  if (result.ok) { showMessage(result.message || 'تم ربط Stars.'); openAdminPanel(); }
+  else if (result.conflict) showMessage(`لم نغيّر Webhook الحالي حفاظًا على البوت: ${result.existingUrl}`);
+  else showMessage(result.error || 'تعذر ربط Webhook.');
 }
 
 async function refreshAdminOrders() { openAdminPanel(); }
