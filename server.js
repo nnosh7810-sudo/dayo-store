@@ -2,6 +2,8 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const { MongoClient, ServerApiVersion } = require('mongodb');
+const { Address, beginCell } = require('@ton/core');
+const { TonClient } = require('@ton/ton');
 
 const app = express();
 app.use(express.json({ limit: '10mb', verify: (req, res, buffer) => { req.rawBody = buffer.toString('utf8'); } }));
@@ -30,6 +32,9 @@ const OWNER_TELEGRAM_ID = process.env.OWNER_TELEGRAM_ID || '51442749';
 const ENV_CRYPTO_PAY_API_TOKEN = process.env.CRYPTO_PAY_API_TOKEN || '';
 const ENV_TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
 const ENV_PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
+const TONCENTER_API_KEY = String(process.env.TONCENTER_API_KEY || '').trim();
+const TON_USDT_MASTER_ADDRESS = String(process.env.TON_USDT_MASTER_ADDRESS || 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs').trim();
+const TON_NETWORK = '-239';
 
 if (!BOT_TOKEN) throw new Error('يرجى ضبط BOT_TOKEN في متغيرات البيئة');
 if (!MONGODB_URI) throw new Error('يرجى ضبط MONGODB_URI في متغيرات البيئة');
@@ -76,9 +81,109 @@ async function getStarsWebhookSecret() {
   const saved = await getPaymentConfigRaw();
   return decryptPaymentSecret(saved.starsWebhookSecretEnc) || ENV_TELEGRAM_WEBHOOK_SECRET;
 }
+async function getTonReceiverAddress() {
+  const saved = await getPaymentConfigRaw();
+  const address = String(saved.tonReceiverAddress || '').trim();
+  if (!address) throw new Error('أدخل عنوان محفظة الاستقبال من لوحة تحكم DAYO أولًا');
+  try { return Address.parse(address); }
+  catch (_) { throw new Error('عنوان محفظة الاستقبال المحفوظ في لوحة التحكم غير صالح'); }
+}
 async function getPublicBaseUrl() {
   const saved = await getPaymentConfigRaw();
   return String(saved.publicBaseUrl || ENV_PUBLIC_BASE_URL || '').replace(/\/$/, '');
+}
+
+
+function getTonClient() {
+  if (!TONCENTER_API_KEY) throw new Error('أضف TONCENTER_API_KEY في إعدادات Render لتفعيل التحقق من معاملات TON');
+  return new TonClient({ endpoint: 'https://toncenter.com/api/v2/jsonRPC', apiKey: TONCENTER_API_KEY });
+}
+function decimalToUnits(value, decimals) {
+  const text = String(value);
+  if (!/^\\d+(?:\\.\\d+)?$/.test(text)) throw new Error('قيمة الدفع غير صالحة');
+  const [whole, fraction = ''] = text.split('.');
+  if (fraction.length > decimals) throw new Error('عدد المنازل العشرية يتجاوز دقة العملة');
+  return (BigInt(whole) * (10n ** BigInt(decimals)) + BigInt((fraction + '0'.repeat(decimals)).slice(0, decimals) || '0')).toString();
+}
+function normalizeTonAddress(value) {
+  try { return Address.parse(String(value)).toRawString().toLowerCase(); }
+  catch (_) { throw new Error('عنوان محفظة TON غير صالح'); }
+}
+function createOrderComment(orderCode) {
+  return beginCell().storeUint(0, 32).storeStringTail(String(orderCode)).endCell();
+}
+async function getJettonWalletAddress(ownerAddress) {
+  const client = getTonClient();
+  const owner = Address.parse(ownerAddress);
+  const result = await client.runMethod(Address.parse(TON_USDT_MASTER_ADDRESS), 'get_wallet_address', [
+    { type: 'slice', cell: beginCell().storeAddress(owner).endCell() }
+  ]);
+  return result.stack.readAddress();
+}
+function cellComment(cell) {
+  try {
+    const slice = cell.beginParse();
+    if (slice.remainingBits < 32 || slice.loadUint(32) !== 0) return '';
+    return slice.loadStringTail();
+  } catch (_) { return ''; }
+}
+function txHashHex(tx) {
+  try { return tx.hash().toString('hex'); } catch (_) { return String(tx.lt || ''); }
+}
+function transactionIsSuccessful(tx) {
+  if (!tx || !tx.inMessage) return false;
+  const desc = tx.description || {};
+  if (desc.aborted === true || desc.destroyed === true) return false;
+  if (desc.computePhase?.success === false || desc.actionPhase?.success === false) return false;
+  return true;
+}
+async function verifyTonConnectOrder(order) {
+  const client = getTonClient();
+  const receiver = await getTonReceiverAddress();
+  const expectedSender = normalizeTonAddress(order.tonSenderAddress || '');
+  const since = Math.floor(new Date(order.createdAt).getTime() / 1000) - 120;
+  const transactions = await client.getTransactions(receiver, { limit: 100 });
+
+  if (order.currency === 'ton') {
+    const expectedAmount = BigInt(decimalToUnits(order.total, 9));
+    for (const tx of transactions) {
+      if (!transactionIsSuccessful(tx) || !tx.inMessage) continue;
+      const info = tx.inMessage.info;
+      if (info.type !== 'internal' || info.bounced === true || info.dest.toRawString().toLowerCase() !== receiver.toRawString().toLowerCase()) continue;
+      if (normalizeTonAddress(info.src.toRawString()) !== expectedSender) continue;
+      if (BigInt(info.value.coins) !== expectedAmount) continue;
+      if (Number(tx.now || 0) < since) continue;
+      if (cellComment(tx.inMessage.body) !== order.orderCode) continue;
+      return { paid: true, reference: txHashHex(tx) };
+    }
+    return { paid: false };
+  }
+
+  if (order.currency === 'usd') {
+    const recipientJettonWallet = await getJettonWalletAddress(receiver.toString({ urlSafe: true, bounceable: true }));
+    const expectedAmount = BigInt(decimalToUnits(order.total, 6));
+    for (const tx of transactions) {
+      if (!transactionIsSuccessful(tx) || !tx.inMessage) continue;
+      const info = tx.inMessage.info;
+      if (info.type !== 'internal' || info.bounced === true || info.dest.toRawString().toLowerCase() !== receiver.toRawString().toLowerCase()) continue;
+      if (info.src.toRawString().toLowerCase() !== recipientJettonWallet.toRawString().toLowerCase()) continue;
+      if (Number(tx.now || 0) < since) continue;
+      const slice = tx.inMessage.body.beginParse();
+      if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x7362d09c) continue; // transfer_notification
+      slice.loadUintBig(64); // query_id
+      const amount = slice.loadCoins();
+      const sender = slice.loadAddress();
+      const hasRef = slice.loadBit();
+      const forwardPayload = hasRef ? slice.loadRef() : slice.asCell();
+      if (sender.toRawString().toLowerCase() !== expectedSender) continue;
+      if (BigInt(amount) !== expectedAmount) continue;
+      if (cellComment(forwardPayload) !== order.orderCode) continue;
+      if (tx.outMessages && tx.outMessages.size > 0) continue;
+      return { paid: true, reference: txHashHex(tx) };
+    }
+    return { paid: false };
+  }
+  throw new Error('عملة TON Connect غير مدعومة لهذا الطلب');
 }
 
 async function connectDB() {
@@ -325,6 +430,11 @@ app.post('/api/products/add', async (req, res) => {
     if (user.role === 'user') throw new Error('ليس لديك صلاحية');
 
     const { name, description, image, prices, category, badge, discount } = req.body;
+    const productType = req.body?.productType === 'physical' ? 'physical' : 'digital';
+    const requestedMethods = Array.isArray(req.body?.paymentMethods) ? req.body.paymentMethods : ['stars'];
+    const allowedMethodSet = new Set(['stars', 'ton', 'usd', 'sar']);
+    const paymentMethods = productType === 'digital' ? ['stars'] : [...new Set(requestedMethods.map(v => String(v).toLowerCase()).filter(v => allowedMethodSet.has(v)))];
+    if (!paymentMethods.length) throw new Error('اختر طريقة دفع واحدة على الأقل للمنتج المادي');
     if (typeof name !== 'string' || !name.trim() || name.trim().length > 150) {
       throw new Error('اسم المنتج مطلوب وبحد أقصى 150 حرفًا');
     }
@@ -342,6 +452,7 @@ app.post('/api/products/add', async (req, res) => {
       description: typeof description === 'string' ? description.slice(0, 5000) : 'لا يوجد وصف',
       image: typeof image === 'string' ? image : '',
       prices: cleanPrices,
+      productType, paymentMethods,
       category: category || 'all',
       badge: badge || '',
       discount: cleanDiscount,
@@ -379,6 +490,15 @@ app.post('/api/products/edit', async (req, res) => {
         updateData.image = image;
       }
       if (prices !== undefined) updateData.prices = validatePrices(prices);
+      if (req.body?.productType !== undefined || req.body?.paymentMethods !== undefined) {
+        const productType = req.body?.productType === 'physical' ? 'physical' : 'digital';
+        const requestedMethods = Array.isArray(req.body?.paymentMethods) ? req.body.paymentMethods : (product.paymentMethods || ['stars']);
+        const allowedMethodSet = new Set(['stars', 'ton', 'usd', 'sar']);
+        const paymentMethods = productType === 'digital' ? ['stars'] : [...new Set(requestedMethods.map(v => String(v).toLowerCase()).filter(v => allowedMethodSet.has(v)))];
+        if (!paymentMethods.length) throw new Error('اختر طريقة دفع واحدة على الأقل للمنتج المادي');
+        updateData.productType = productType;
+        updateData.paymentMethods = paymentMethods;
+      }
       if (category !== undefined) updateData.category = category;
       if (badge !== undefined) updateData.badge = badge;
       if (discount !== undefined) {
@@ -986,6 +1106,10 @@ async function getPaymentSettings() {
     cryptoWebhookConfigured: saved.cryptoWebhookConfigured === true || !!(ENV_CRYPTO_PAY_API_TOKEN && ENV_PUBLIC_BASE_URL),
     cryptoTonEnabled: saved.cryptoTonEnabled !== false,
     cryptoUsdtEnabled: saved.cryptoUsdtEnabled !== false,
+    tonConnectEnabled: saved.tonConnectEnabled !== false && !!saved.tonReceiverAddress && !!TONCENTER_API_KEY,
+    tonConnectReady: !!saved.tonReceiverAddress && !!TONCENTER_API_KEY,
+    tonReceiverAddress: String(saved.tonReceiverAddress || ''),
+    tonUsdtMasterAddress: TON_USDT_MASTER_ADDRESS,
     cryptoTokenConfigured: !!cryptoToken,
     starsEnabled: saved.starsEnabled !== false && !!(starsSecret && publicBaseUrl) && (saved.starsWebhookConfigured === true || !!(ENV_TELEGRAM_WEBHOOK_SECRET && ENV_PUBLIC_BASE_URL)),
     starsSecretConfigured: !!starsSecret,
@@ -1029,6 +1153,13 @@ app.post('/api/payments/settings/save', async (req, res) => {
     const manualInstructions = String(req.body?.manualInstructions || '').trim().slice(0, 2000);
     const manualPaymentUsername = String(req.body?.manualPaymentUsername || '').trim().replace(/^@/, '');
     const cryptoEnabled = req.body?.cryptoEnabled === true;
+    const tonConnectEnabled = req.body?.tonConnectEnabled !== false;
+    const tonReceiverAddressInput = String(req.body?.tonReceiverAddress || '').trim();
+    const previous = await getPaymentConfigRaw();
+    const currentReceiverAddress = String(previous.tonReceiverAddress || '').trim();
+    if (tonReceiverAddressInput !== currentReceiverAddress && user.role !== 'owner') throw new Error('تغيير عنوان محفظة الاستقبال متاح للمالك فقط');
+    if (tonReceiverAddressInput) normalizeTonAddress(tonReceiverAddressInput);
+    if (tonConnectEnabled && !tonReceiverAddressInput && !currentReceiverAddress) throw new Error('أدخل عنوان محفظة الاستقبال من لوحة التحكم أولًا');
     const cryptoTonEnabled = req.body?.cryptoTonEnabled !== false;
     const cryptoUsdtEnabled = req.body?.cryptoUsdtEnabled !== false;
     const cryptoWebhookConfigured = req.body?.cryptoWebhookConfigured === true;
@@ -1042,12 +1173,12 @@ app.post('/api/payments/settings/save', async (req, res) => {
       const checkData = await check.json().catch(() => ({}));
       if (!check.ok || !checkData.ok) throw new Error('رمز Crypto Pay غير صحيح أو تعذر التحقق منه');
     }
-    const previous = await getPaymentConfigRaw();
     const baseUrlChanged = !!(previous.publicBaseUrl && previous.publicBaseUrl !== publicBaseUrl);
     const paymentSettings = {
       ...previous,
       manualEnabled, manualInstructions, manualPaymentUsername,
-      cryptoEnabled, cryptoTonEnabled, cryptoUsdtEnabled, cryptoWebhookConfigured, starsEnabled,
+      cryptoEnabled, cryptoTonEnabled, cryptoUsdtEnabled, cryptoWebhookConfigured, tonConnectEnabled, starsEnabled,
+      tonReceiverAddress: tonReceiverAddressInput || currentReceiverAddress,
       publicBaseUrl,
       updatedAt: new Date(), updatedBy: String(user.id)
     };
@@ -1080,15 +1211,19 @@ app.post('/api/payments/telegram-webhook/setup', async (req, res) => {
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
+function productAllowsCurrency(product, currency) {
+  const type = product?.productType === 'physical' ? 'physical' : 'digital';
+  if (type === 'digital') return currency === 'stars';
+  const methods = Array.isArray(product?.paymentMethods) ? product.paymentMethods : ['stars'];
+  return methods.includes(currency);
+}
+
 app.post('/api/orders/create', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     const currency = cleanOrderCurrency(req.body?.currency);
-    const paymentMethod = currency === 'sar' ? 'manual' : (currency === 'stars' ? 'stars' : 'cryptopay');
+    const paymentMethod = currency === 'sar' ? 'manual' : (currency === 'stars' ? 'stars' : 'tonconnect');
     const settings = await getPaymentSettings();
-    if (currency === 'sar' && (!settings.manualEnabled || !settings.manualPaymentUsername)) throw new Error('الدفع اليدوي بالريال غير مهيأ حاليًا');
-    if (['ton', 'usd'].includes(currency) && (!settings.cryptoEnabled || (currency === 'ton' && !settings.cryptoTonEnabled) || (currency === 'usd' && !settings.cryptoUsdtEnabled))) throw new Error('وسيلة الدفع بهذه العملة غير مفعّلة حاليًا من لوحة التحكم.');
-    if (currency === 'stars' && !settings.starsEnabled) throw new Error('الدفع عبر Telegram Stars غير مفعّل حاليًا من لوحة التحكم.');
     const requestedItems = req.body?.items;
     if (!Array.isArray(requestedItems) || requestedItems.length < 1 || requestedItems.length > 30) throw new Error('السلة فارغة أو تحتوي عددًا غير مسموح من المنتجات');
     const merged = new Map();
@@ -1105,11 +1240,15 @@ app.post('/api/orders/create', async (req, res) => {
     for (const [productId, quantity] of merged.entries()) {
       const product = await db.collection('products').findOne({ id: productId });
       if (!product) throw new Error('أحد المنتجات لم يعد متاحًا');
+      if (!productAllowsCurrency(product, currency)) throw new Error(`طريقة الدفع المختارة غير مقبولة للمنتج: ${product.name}`);
       const unitPrice = getDiscountedUnitPrice(product, currency);
       const lineTotal = orderRound(unitPrice * quantity, currency);
       total = orderRound(total + lineTotal, currency);
       lines.push({ productId: String(product.id), name: String(product.name || 'منتج').slice(0, 150), quantity, unitPrice, lineTotal });
     }
+    if (currency === 'sar' && (!settings.manualEnabled || !settings.manualPaymentUsername)) throw new Error('الدفع اليدوي بالريال غير مهيأ حاليًا');
+    if (['ton', 'usd'].includes(currency) && (!settings.tonConnectEnabled || (currency === 'ton' && !settings.cryptoTonEnabled) || (currency === 'usd' && !settings.cryptoUsdtEnabled))) throw new Error('وسيلة الدفع بهذه العملة غير مفعّلة حاليًا من لوحة التحكم.');
+    if (currency === 'stars' && !settings.starsEnabled) throw new Error('الدفع عبر Telegram Stars غير مفعّل حاليًا من لوحة التحكم.');
     if (!(total > 0)) throw new Error('إجمالي الطلب غير صالح');
     if (currency === 'stars' && (!Number.isInteger(total) || total > 100000)) throw new Error('قيمة Stars غير صحيحة أو تتجاوز الحد المسموح');
 
@@ -1130,10 +1269,8 @@ app.post('/api/orders/create', async (req, res) => {
 
     let checkoutUrl = '';
     try {
-      if (paymentMethod === 'cryptopay') {
-        const invoice = await createCryptoPayInvoice(order);
-        checkoutUrl = invoice.pay_url;
-        await db.collection('orders').updateOne({ id: order.id }, { $set: { providerInvoiceId: String(invoice.invoice_id), providerAsset: invoice.asset, providerPayUrl: invoice.pay_url, providerCreatedAt: new Date() } });
+      if (paymentMethod === 'tonconnect') {
+        // TON Connect transaction is prepared only after the customer connects their wallet.
       } else if (paymentMethod === 'stars') {
         checkoutUrl = await createStarsInvoice(order);
         await db.collection('orders').updateOne({ id: order.id }, { $set: { providerPayUrl: checkoutUrl, providerCreatedAt: new Date() } });
@@ -1152,6 +1289,71 @@ app.post('/api/orders/create', async (req, res) => {
       order: { id: order.id, orderCode, total, currency, status: order.status, paymentMethod, paymentInstructions: order.paymentInstructions, manualPaymentUsername: order.manualPaymentUsername },
       checkoutUrl
     });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
+
+app.post('/api/ton/prepare', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    const orderId = String(req.body?.orderId || '');
+    const walletAddress = String(req.body?.walletAddress || '');
+    const order = await db.collection('orders').findOne({ id: orderId, userId: user.id, paymentMethod: 'tonconnect', status: 'awaiting_payment' });
+    if (!order) throw new Error('الطلب غير موجود أو لم يعد بانتظار الدفع');
+    if (!TONCENTER_API_KEY) throw new Error('أضف TONCENTER_API_KEY في إعدادات Render لتفعيل التحقق من معاملات TON');
+    const receiverAddress = await getTonReceiverAddress();
+    const sender = Address.parse(walletAddress);
+    await db.collection('orders').updateOne({ id: order.id, userId: user.id }, { $set: { tonSenderAddress: sender.toRawString().toLowerCase(), tonPaymentPreparedAt: new Date(), updatedAt: new Date() } });
+    const comment = createOrderComment(order.orderCode).toBoc().toString('base64');
+    let message;
+    if (order.currency === 'ton') {
+      message = { address: receiverAddress.toString({ urlSafe: true, bounceable: true }), amount: decimalToUnits(order.total, 9), payload: comment };
+    } else if (order.currency === 'usd') {
+      const senderJettonWallet = await getJettonWalletAddress(sender.toString({ urlSafe: true, bounceable: true }));
+      const forwardPayload = createOrderComment(order.orderCode);
+      const jettonBody = beginCell()
+        .storeUint(0xf8a7ea5, 32)
+        .storeUint(BigInt(Date.now()), 64)
+        .storeCoins(BigInt(decimalToUnits(order.total, 6)))
+        .storeAddress(receiverAddress)
+        .storeAddress(sender)
+        .storeBit(0)
+        .storeCoins(1n)
+        .storeBit(1)
+        .storeRef(forwardPayload)
+        .endCell();
+      message = { address: senderJettonWallet.toString({ urlSafe: true, bounceable: true }), amount: '50000000', payload: jettonBody.toBoc().toString('base64') };
+    } else throw new Error('عملة الطلب غير مدعومة');
+    res.json({ ok: true, transaction: { validUntil: Math.floor(Date.now() / 1000) + 300, network: TON_NETWORK, messages: [message] } });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/ton/submit', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    const orderId = String(req.body?.orderId || '');
+    const walletAddress = normalizeTonAddress(req.body?.walletAddress || '');
+    const result = await db.collection('orders').updateOne(
+      { id: orderId, userId: user.id, paymentMethod: 'tonconnect', status: 'awaiting_payment', tonSenderAddress: walletAddress },
+      { $set: { tonWalletSubmittedAt: new Date(), updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) throw new Error('تعذر ربط محاولة الدفع بالطلب');
+    res.json({ ok: true, message: 'تم إرسال طلب التحويل للمحفظة. يجري انتظار تأكيد الشبكة.' });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/ton/verify', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    const orderId = String(req.body?.orderId || '');
+    const order = await db.collection('orders').findOne({ id: orderId, userId: user.id, paymentMethod: 'tonconnect' });
+    if (!order) throw new Error('الطلب غير موجود');
+    if (order.paymentStatus === 'paid') return res.json({ ok: true, paid: true, status: order.status });
+    if (!order.tonWalletSubmittedAt || !order.tonSenderAddress) throw new Error('لم يتم إرسال معاملة من المحفظة لهذا الطلب');
+    const result = await verifyTonConnectOrder(order);
+    if (!result.paid) return res.json({ ok: true, paid: false, message: 'لم يظهر التحويل المؤكد على الشبكة بعد. أعد المحاولة بعد قليل.' });
+    await markOrderPaid(order, 'ton_connect', result.reference);
+    return res.json({ ok: true, paid: true, reference: result.reference, status: 'paid' });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
@@ -1231,7 +1433,7 @@ app.post('/api/orders/update-status', async (req, res) => {
     if (status === 'paid' && order.paymentMethod === 'manual' && !order.paymentNotified) {
       throw new Error('لا يمكن تأكيد الدفع قبل أن يرسل العميل إشعار إتمام التحويل');
     }
-    if (status === 'paid' && ['cryptopay', 'stars'].includes(order.paymentMethod) && order.paymentStatus !== 'paid') {
+    if (status === 'paid' && ['cryptopay', 'stars', 'tonconnect'].includes(order.paymentMethod) && order.paymentStatus !== 'paid') {
       throw new Error('هذا الطلب يستخدم دفعًا تلقائيًا؛ سيتم تأكيده بعد وصول إشعار الدفع الموثوق.');
     }
     if (status === 'rejected' && order.paymentStatus === 'paid') {
