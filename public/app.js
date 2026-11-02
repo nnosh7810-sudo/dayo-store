@@ -4,6 +4,15 @@
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 
+function initTonConnect() {
+  if (tonConnectUI) return tonConnectUI;
+  const UI = window.TON_CONNECT_UI;
+  if (!UI?.TonConnectUI) return null;
+  tonConnectUI = new UI.TonConnectUI({ manifestUrl: `${window.location.origin}/tonconnect-manifest.json` });
+  return tonConnectUI;
+}
+setTimeout(() => { try { initTonConnect(); } catch (e) { console.warn('TON Connect init failed', e); } }, 0);
+
 let userRole = 'user';
 let userInfo = null;
 let nav1Initialized = false;
@@ -32,7 +41,8 @@ let realStats = { totalUsers: 0, onlineUsers: 0, totalProducts: 0, totalSold: 0 
 let cartItems = [];
 let cartCurrency = 'sar';
 let cartPaymentMethod = 'manual';
-let cartPaymentSettings = { manualEnabled: true, manualInstructions: '', manualPaymentUsername: '', cryptoEnabled: false, starsEnabled: true };
+let cartPaymentSettings = { manualEnabled: true, manualInstructions: '', manualPaymentUsername: '', cryptoEnabled: false, tonConnectEnabled: false, starsEnabled: true };
+let tonConnectUI = null;
 let notificationPoller = null;
 let currentNotifications = [];
 let sideDrawerView = 'menu';
@@ -1360,6 +1370,21 @@ async function openAdminPanel() {
         <input type="number" id="price-stars" placeholder="نجوم ⭐" style="padding:8px;border-radius:5px;border:none;">
         <input type="number" id="price-sar" placeholder="ريال 🇸🇦" style="padding:8px;border-radius:5px;border:none;">
       </div>
+      <div style="background:#0d1b2d;padding:12px;border-radius:8px;margin-bottom:10px;">
+        <label style="display:block;color:#a0c4ff;margin-bottom:7px;">نوع المنتج</label>
+        <select id="new-prod-type" onchange="updateProductPaymentControls()" style="width:100%;padding:9px;border-radius:5px;border:none;margin-bottom:10px;">
+          <option value="digital">منتج / خدمة رقمية</option>
+          <option value="physical">منتج / خدمة مادية</option>
+        </select>
+        <label style="display:block;color:#a0c4ff;margin-bottom:7px;">طرق الدفع المقبولة لهذا المنتج</label>
+        <div id="new-prod-payment-methods" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;color:white;font-size:13px;">
+          <label><input type="checkbox" name="prod-payment-method" value="stars" checked> Telegram Stars</label>
+          <label><input type="checkbox" name="prod-payment-method" value="ton"> TON</label>
+          <label><input type="checkbox" name="prod-payment-method" value="usd"> USDT على TON</label>
+          <label><input type="checkbox" name="prod-payment-method" value="sar"> تحويل / دفع يدوي SAR</label>
+        </div>
+        <small id="prod-payment-hint" style="display:block;color:#9aaec5;margin-top:8px;">المنتجات الرقمية داخل تيليجرام تقبل Stars فقط.</small>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
         <select id="new-prod-category" style="padding:8px;border-radius:5px;border:none;">
           <option value="all">بدون تصنيف</option>
@@ -1435,6 +1460,21 @@ async function openAdminPanel() {
   currentSliderImage = "";
 }
 
+/* ====== طرق الدفع الخاصة بكل منتج ====== */
+function updateProductPaymentControls() {
+  const type = document.getElementById('new-prod-type')?.value || 'digital';
+  const boxes = [...document.querySelectorAll('input[name="prod-payment-method"]')];
+  boxes.forEach(box => {
+    box.disabled = type === 'digital' && box.value !== 'stars';
+    if (type === 'digital') box.checked = box.value === 'stars';
+  });
+  const hint = document.getElementById('prod-payment-hint');
+  if (hint) hint.textContent = type === 'digital' ? 'المنتجات الرقمية داخل تيليجرام تقبل Stars فقط.' : 'حدد طرق الدفع التي تريد قبولها لهذا المنتج المادي.';
+}
+function selectedProductPaymentMethods() {
+  return [...document.querySelectorAll('input[name="prod-payment-method"]:checked')].map(box => box.value);
+}
+
 /* ====== المنتجات ====== */
 async function addProduct() {
   const name = document.getElementById('new-prod-name').value;
@@ -1448,8 +1488,10 @@ async function addProduct() {
   const category = document.getElementById('new-prod-category')?.value || 'all';
   const badge = document.getElementById('new-prod-badge')?.value || '';
   const discount = parseFloat(document.getElementById('new-prod-discount')?.value) || 0;
+  const productType = document.getElementById('new-prod-type')?.value || 'digital';
+  const paymentMethods = selectedProductPaymentMethods();
   if (!name) return alert('أدخل اسم المنتج');
-  const res = await apiCall('/api/products/add', { name, description, image: currentBase64Image, prices, category, badge, discount });
+  const res = await apiCall('/api/products/add', { name, description, image: currentBase64Image, prices, category, badge, discount, productType, paymentMethods });
   if (res.ok) {
     const link = res.link || ('#product-' + res.product.id);
     tg.showAlert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + link);
@@ -1474,6 +1516,12 @@ async function editProductForm(id) {
   document.getElementById('price-ton').value = product.prices?.ton || '';
   document.getElementById('price-stars').value = product.prices?.stars || '';
   document.getElementById('price-sar').value = product.prices?.sar || '';
+  const typeSel = document.getElementById('new-prod-type');
+  if (typeSel) typeSel.value = product.productType === 'physical' ? 'physical' : 'digital';
+  updateProductPaymentControls();
+  const savedMethods = Array.isArray(product.paymentMethods) ? product.paymentMethods : ['stars'];
+  document.querySelectorAll('input[name="prod-payment-method"]').forEach(box => { box.checked = savedMethods.includes(box.value); });
+  updateProductPaymentControls();
   const catSel = document.getElementById('new-prod-category');
   if (catSel) catSel.value = product.category || 'all';
   const badgeSel = document.getElementById('new-prod-badge');
@@ -1500,7 +1548,9 @@ async function saveEdit(id) {
   const category = document.getElementById('new-prod-category')?.value || 'all';
   const badge = document.getElementById('new-prod-badge')?.value || '';
   const discount = parseFloat(document.getElementById('new-prod-discount')?.value) || 0;
-  const res = await apiCall('/api/products/edit', { productId: id, name, description, image: currentBase64Image, prices, category, badge, discount });
+  const productType = document.getElementById('new-prod-type')?.value || 'digital';
+  const paymentMethods = selectedProductPaymentMethods();
+  const res = await apiCall('/api/products/edit', { productId: id, name, description, image: currentBase64Image, prices, category, badge, discount, productType, paymentMethods });
   if(res.ok) { tg.showAlert('تم التعديل ✅'); openAdminPanel(); } else tg.showAlert(res.error);
 }
 
@@ -1798,15 +1848,21 @@ async function openCart() {
 function renderCartPage() {
   const page = ensureDayoDynamicPage();
   const validItems = cartItems.map(item => ({ ...item, product: currentShopProducts.find(p => String(p.id) === item.productId) })).filter(item => item.product);
-  const currencies = ['sar', 'usd', 'ton', 'stars'].filter(currency => {
+  const paymentAllowedByProduct = (product, currency) => {
+    const type = product?.productType === 'physical' ? 'physical' : 'digital';
+    if (type === 'digital') return currency === 'stars';
+    const methods = Array.isArray(product?.paymentMethods) ? product.paymentMethods : ['stars'];
+    return methods.includes(currency);
+  };
+  const currencies = ['stars', 'ton', 'usd', 'sar'].filter(currency => {
     const enabled = currency === 'sar'
       ? cartPaymentSettings.manualEnabled && !!cartPaymentSettings.manualPaymentUsername
       : currency === 'usd'
-        ? cartPaymentSettings.cryptoEnabled && cartPaymentSettings.cryptoUsdtEnabled !== false
+        ? cartPaymentSettings.tonConnectEnabled && cartPaymentSettings.cryptoUsdtEnabled !== false
         : currency === 'ton'
-          ? cartPaymentSettings.cryptoEnabled && cartPaymentSettings.cryptoTonEnabled !== false
+          ? cartPaymentSettings.tonConnectEnabled && cartPaymentSettings.cryptoTonEnabled !== false
           : cartPaymentSettings.starsEnabled;
-    return enabled && validItems.length && validItems.every(item => Number(item.product.prices?.[currency]) > 0);
+    return enabled && validItems.length && validItems.every(item => Number(item.product.prices?.[currency]) > 0 && paymentAllowedByProduct(item.product, currency));
   });
   if (!currencies.includes(cartCurrency)) cartCurrency = currencies.includes('sar') ? 'sar' : (currencies[0] || 'sar');
   const itemsHTML = validItems.map(({ product, quantity }) => {
@@ -1825,17 +1881,17 @@ function renderCartPage() {
     ? `<div class="dayo-payment-note"><strong>الدفع اليدوي بالريال السعودي</strong><p>سيظهر لك حساب الدفع ورقم طلبك بعد إنشاء الطلب. حوّل المبلغ إلى الحساب المحدد، ثم انتظر تأكيد الإدارة.</p></div>`
     : cartCurrency === 'stars'
       ? `<div class="dayo-payment-note"><strong>الدفع التلقائي عبر Telegram Stars</strong><p>سيظهر لك مستطيل الدفع الرسمي من تيليجرام. بعد نجاح الدفع سيتم تأكيد الطلب تلقائيًا.</p></div>`
-      : `<div class="dayo-payment-note"><strong>الدفع التلقائي عبر Crypto Pay</strong><p>سيتم إنشاء فاتورة ${cartCurrency === 'ton' ? 'TON' : 'USDT على شبكة TON'} خاصة بطلبك، ويتأكد الدفع تلقائيًا بعد وصول إشعار موثوق من مزود الدفع.</p></div>`;
-  const providerUnavailable = cartCurrency === 'sar' ? !cartPaymentSettings.manualEnabled || !cartPaymentSettings.manualPaymentUsername : (['ton', 'usd'].includes(cartCurrency) ? !cartPaymentSettings.cryptoEnabled : !cartPaymentSettings.starsEnabled);
+      : `<div class="dayo-payment-note"><strong>الدفع المباشر عبر TON Connect</strong><p>ستربط محفظتك وتوافق على تحويل ${cartCurrency === 'ton' ? 'TON' : 'USDT على شبكة TON'} من داخل تجربة الدفع. لن يُعتمد الطلب إلا بعد التحقق من المعاملة على الشبكة.</p></div>`;
+  const providerUnavailable = cartCurrency === 'sar' ? !cartPaymentSettings.manualEnabled || !cartPaymentSettings.manualPaymentUsername : (['ton', 'usd'].includes(cartCurrency) ? !cartPaymentSettings.tonConnectEnabled : !cartPaymentSettings.starsEnabled);
   const checkoutDisabled = !validItems.length || noCurrency || providerUnavailable;
   page.innerHTML = `<div class="dayo-page-head"><button class="dayo-back" onclick="goHome()">‹</button><div><h2>سلة المشتريات</h2><small>${cartCount()} منتج</small></div><button class="dayo-secondary" onclick="openMyOrders()">طلباتي</button></div>
     ${validItems.length ? `<div class="dayo-cart-list">${itemsHTML}</div>
       <section class="dayo-checkout-card"><h3>إتمام الطلب</h3>
         <label>عملة الدفع</label><select id="cart-currency" onchange="changeCartCurrency(this.value)" ${noCurrency ? 'disabled' : ''}>${currencies.map(currency => `<option value="${currency}" ${currency === cartCurrency ? 'selected' : ''}>${escapeHTML(currencyLabel(currency))}</option>`).join('')}</select>
-        ${noCurrency ? '<p class="dayo-warning">لا توجد عملة مشتركة مسعّرة لجميع المنتجات في السلة. أزل بعض المنتجات أو اختر منتجات لها عملة مشتركة.</p>' : ''}
+        ${noCurrency ? '<p class="dayo-warning">لا توجد طريقة دفع مشتركة ومفعّلة لجميع المنتجات في السلة. راجع نوع كل منتج وطرق الدفع وأسعاره من لوحة الإدارة، أو قسّم مشترياتك إلى طلبات منفصلة.</p>' : ''}
         <div class="dayo-total-row"><span>الإجمالي</span><strong>${money(subtotal, cartCurrency)}</strong></div>
         ${paymentInfo}
-        ${providerUnavailable ? `<p class="dayo-warning">${cartCurrency === 'sar' ? 'لم يحدد المتجر حساب استقبال الدفع اليدوي بعد.' : (['ton','usd'].includes(cartCurrency) ? 'الدفع التلقائي للعملات الرقمية غير مهيأ من الخادم بعد.' : 'دفع Telegram Stars غير متاح حاليًا.')}</p>` : ''}
+        ${providerUnavailable ? `<p class="dayo-warning">${cartCurrency === 'sar' ? 'لم يحدد المتجر حساب استقبال الدفع اليدوي بعد.' : (['ton','usd'].includes(cartCurrency) ? 'ربط TON Connect غير مهيأ على الخادم بعد. راجع إعدادات Render.' : 'دفع Telegram Stars غير متاح حاليًا.')}</p>` : ''}
         <button class="dayo-primary" onclick="submitCartOrder()" ${checkoutDisabled ? 'disabled' : ''}>إنشاء الطلب والمتابعة للدفع</button>
       </section>` : `<div class="dayo-empty-cart"><div>🛒</div><h3>سلتك فارغة</h3><p>أضف المنتجات التي ترغب بشرائها، وستظهر هنا.</p><button class="dayo-primary" onclick="openShop()">تصفح المنتجات</button><button class="dayo-secondary" onclick="openMyOrders()">عرض طلباتي</button></div>`}`;
 }
@@ -1862,7 +1918,7 @@ async function submitCartOrder() {
       ? `<div class="dayo-payment-note"><strong>حوّل المبلغ إلى حساب الدفع</strong><p>حساب الاستقبال:</p><a class="dayo-primary dayo-checkout-link" href="https://t.me/${encodeURIComponent(order.manualPaymentUsername || '')}" target="_blank" rel="noopener noreferrer">@${escapeHTML(order.manualPaymentUsername || 'لم يتم ضبط الحساب')}</a>${order.paymentInstructions ? `<p>${escapeHTML(order.paymentInstructions)}</p>` : ''}<p>أرسل رقم الطلب <b>${escapeHTML(order.orderCode)}</b> إلى حساب الدفع لتسهيل المطابقة.</p><button class="dayo-primary" onclick="notifyManualPayment('${encodedArg(order.id)}')">أشعرت المتجر بإتمام التحويل</button><small class="dayo-muted">لن يتأكد الطلب إلا بعد تحقق الإدارة من وصول المبلغ.</small></div>`
       : stars
         ? `<div class="dayo-payment-note"><strong>ادفع عبر Telegram Stars</strong><p>اضغط الزر لفتح نافذة الدفع الرسمية داخل تيليجرام. سيتم تأكيد طلبك تلقائيًا بعد نجاح العملية.</p><button class="dayo-primary" onclick="openTelegramInvoice('${encodedArg(response.checkoutUrl || '')}')">⭐ الدفع الآن</button></div>`
-        : `<div class="dayo-payment-note"><strong>أكمل الدفع عبر ${order.currency === 'ton' ? 'TON' : 'USDT على TON'}</strong><p>فاتورة آمنة مرتبطة برقم طلبك. بعد الدفع سيصل تأكيد مزود الدفع ويُحدّث الطلب تلقائيًا.</p><button class="dayo-primary" onclick="openCryptoInvoice('${encodedArg(response.checkoutUrl || '')}')">فتح فاتورة الدفع</button></div>`;
+        : `<div class="dayo-payment-note"><strong>الدفع عبر ${order.currency === 'ton' ? 'TON' : 'USDT على TON'}</strong><p>اربط محفظتك ثم وافق على التحويل. سيبقى الطلب بانتظار التحقق من الشبكة.</p><button class="dayo-primary" onclick="startTonConnectPayment('${encodedArg(order.id)}')">ربط المحفظة والدفع</button><p id="ton-pay-status" class="dayo-muted">عنوان الاستقبال: ${escapeHTML(cartPaymentSettings.tonReceiverAddress || '')}</p></div>`;
     page.innerHTML = `<div class="dayo-order-success"><div class="dayo-success-icon">✓</div><h2>تم إنشاء طلبك</h2><p>رقم الطلب</p><strong class="dayo-order-code">${escapeHTML(order.orderCode)}</strong><div class="dayo-total-row"><span>الإجمالي</span><strong>${money(order.total, order.currency)}</strong></div>
       <p class="dayo-muted">حالة الطلب: بانتظار الدفع. سيُحدّث النظام الحالة بعد التحقق من الدفع.</p>
       ${paymentBlock}
@@ -1871,6 +1927,45 @@ async function submitCartOrder() {
   } catch (error) {
     showMessage(error.message || 'حدث خطأ أثناء إنشاء الطلب.');
     renderCartPage();
+  }
+}
+
+
+async function startTonConnectPayment(orderId) {
+  try {
+    const ui = initTonConnect();
+    if (!ui) throw new Error('تعذر تحميل TON Connect. حدّث الصفحة وحاول مجددًا.');
+    if (!ui.wallet) {
+      await ui.openModal();
+      showMessage('اربط محفظتك أولًا، ثم اضغط زر الدفع مرة أخرى.');
+      return;
+    }
+    if (String(ui.wallet.account?.chain || '') !== '-239') throw new Error('اختر محفظة TON على الشبكة الرئيسية Mainnet.');
+    const walletAddress = ui.wallet.account.address;
+    const prepared = await apiCall('/api/ton/prepare', { orderId, walletAddress });
+    if (!prepared.ok || !prepared.transaction) throw new Error(prepared.error || 'تعذر تجهيز معاملة الدفع');
+    const status = document.getElementById('ton-pay-status');
+    if (status) status.textContent = 'افتح محفظتك وراجع تفاصيل التحويل ثم وافق عليه.';
+    await ui.sendTransaction(prepared.transaction);
+    const submitted = await apiCall('/api/ton/submit', { orderId, walletAddress });
+    if (!submitted.ok) throw new Error(submitted.error || 'تم إرسال التحويل لكن تعذر تسجيل محاولة الدفع');
+    if (status) status.textContent = 'تم إرسال التحويل. نتحقق الآن من وصوله على شبكة TON...';
+    showMessage('تم إرسال التحويل. انتظر تأكيد الشبكة.');
+    for (let attempt = 0; attempt < 18; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      const checked = await apiCall('/api/ton/verify', { orderId });
+      if (checked.ok && checked.paid) {
+        if (status) status.textContent = 'تم تأكيد الدفع بنجاح. طلبك بانتظار التنفيذ.';
+        showMessage('تم تأكيد الدفع بنجاح.');
+        openMyOrders();
+        return;
+      }
+      if (!checked.ok && attempt === 17) throw new Error(checked.error || 'تعذر التحقق من الدفع');
+    }
+    if (status) status.textContent = 'لم يظهر التأكيد بعد. افتح طلباتي وأعد التحقق بعد قليل.';
+    showMessage('التحويل أُرسل، لكن تأكيد الشبكة قد يستغرق وقتًا إضافيًا.');
+  } catch (error) {
+    showMessage(error.message || 'تعذر إتمام الدفع عبر TON Connect.');
   }
 }
 
@@ -2019,7 +2114,10 @@ function renderPaymentSettingsAdmin(settings = {}) {
     <label><input id="pay-manual-enabled" type="checkbox" ${settings.manualEnabled !== false ? 'checked' : ''}> تفعيل الدفع اليدوي بالريال</label>
     <label>يوزر حساب استقبال الدفع</label><input id="pay-manual-username" type="text" value="${escapeHTML(settings.manualPaymentUsername || '')}" placeholder="مثال: DAYO_PAY">
     <label>تعليمات التحويل (اختياري)</label><textarea id="pay-manual-instructions" rows="3" placeholder="اكتب تعليمات التحويل ورقم الطلب">${escapeHTML(settings.manualInstructions || '')}</textarea>
-    <hr style="border-color:#333;margin:16px 0;"><h4>الدفع التلقائي – Crypto Pay</h4>
+    <hr style="border-color:#333;margin:16px 0;"><h4>الدفع المباشر – TON Connect</h4>
+    <label><input id="pay-tonconnect-enabled" type="checkbox" ${settings.tonConnectEnabled ? 'checked' : ''}> تفعيل الدفع عبر TON Connect</label>
+    <label>عنوان محفظة استقبال TON وUSDT</label><input id="pay-ton-receiver-address" type="text" dir="ltr" value="${escapeHTML(settings.tonReceiverAddress || '')}" placeholder="ألصق عنوان محفظة TON هنا"><small class="dayo-muted">يُحفظ العنوان في قاعدة البيانات من لوحة التحكم. تغييره متاح للمالك فقط. ${settings.tonConnectReady ? 'التحقق الآلي جاهز.' : 'تأكد من إضافة TONCENTER_API_KEY إلى Render.'}</small>
+    <hr style="border-color:#333;margin:16px 0;"><h4>إعداد Crypto Pay القديم (غير مستخدم لطلبات TON الجديدة)</h4>
     <label><input id="pay-crypto-enabled" type="checkbox" ${settings.cryptoEnabled ? 'checked' : ''}> تفعيل الدفع التلقائي بالعملات الرقمية</label>
     <label><input id="pay-crypto-ton-enabled" type="checkbox" ${settings.cryptoTonEnabled !== false ? 'checked' : ''}> قبول TON</label>
     <label><input id="pay-crypto-usdt-enabled" type="checkbox" ${settings.cryptoUsdtEnabled !== false ? 'checked' : ''}> قبول USDT على شبكة TON</label>
@@ -2041,7 +2139,7 @@ function renderOrdersAdmin(orders = []) {
   const cards = orders.map(order => `<article class="admin-section-card" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>${escapeHTML(order.orderCode || 'طلب')}</strong><b>${money(order.total, order.currency)}</b></div>
     <div style="font-size:12px;color:#a0c4ff;margin:7px 0">العميل: ${escapeHTML(order.customerName || 'عميل')} · ID: ${escapeHTML(order.userId || '')}</div>
     <div style="font-size:12px;color:#fff;margin-bottom:7px">${(order.items || []).map(item => `${escapeHTML(item.name)} × ${Number(item.quantity) || 1}`).join('، ')}</div>
-    <div style="font-size:12px;color:#a0c4ff;margin-bottom:8px">الدفع: ${order.paymentMethod === 'manual' ? 'تحويل يدوي – SAR' : order.paymentMethod === 'cryptopay' ? (order.currency === 'ton' ? 'Crypto Pay – TON' : 'Crypto Pay – USDT على TON') : order.paymentMethod === 'stars' ? 'Telegram Stars' : 'وسيلة أخرى'} · ${order.paymentMethod === 'manual' ? (order.paymentNotified ? 'العميل أشعر بالتحويل – يلزم التحقق' : 'بانتظار التحويل') : (order.paymentStatus === 'paid' ? 'مدفوع تلقائيًا' : 'بانتظار تأكيد مزود الدفع')}</div>
+    <div style="font-size:12px;color:#a0c4ff;margin-bottom:8px">الدفع: ${order.paymentMethod === 'manual' ? 'تحويل يدوي – SAR' : order.paymentMethod === 'cryptopay' ? (order.currency === 'ton' ? 'Crypto Pay – TON' : 'Crypto Pay – USDT على TON') : order.paymentMethod === 'tonconnect' ? (order.currency === 'ton' ? 'TON Connect – TON' : 'TON Connect – USDT') : order.paymentMethod === 'stars' ? 'Telegram Stars' : 'وسيلة أخرى'} · ${order.paymentMethod === 'manual' ? (order.paymentNotified ? 'العميل أشعر بالتحويل – يلزم التحقق' : 'بانتظار التحويل') : (order.paymentStatus === 'paid' ? 'مدفوع تلقائيًا' : 'بانتظار تأكيد مزود الدفع')}</div>
     <div style="display:flex;gap:7px;flex-wrap:wrap"><select id="order-status-${escapeHTML(order.id)}" style="flex:1;min-width:150px;padding:9px;border-radius:7px">${statuses.map(([key,label]) => `<option value="${key}" ${key === order.status ? 'selected' : ''}>${label}</option>`).join('')}</select><button onclick="updateOrderStatus('${encodedArg(order.id)}')" style="background:#4A90E2;color:#fff;border:0;border-radius:7px;padding:8px 12px">حفظ الحالة</button></div>
   </article>`).join('');
   return `<hr style="border-color:#333;margin:20px 0;"><section><h3 style="color:inherit">إدارة الطلبات (${orders.length})</h3><button onclick="refreshAdminOrders()" style="background:#315d91;color:#fff;border:0;padding:8px 12px;border-radius:7px;margin-bottom:10px">تحديث الطلبات</button>${cards || '<p>لا توجد طلبات حتى الآن.</p>'}</section>`;
@@ -2052,6 +2150,8 @@ async function savePaymentSettings() {
     manualEnabled: !!document.getElementById('pay-manual-enabled')?.checked,
     manualInstructions: document.getElementById('pay-manual-instructions')?.value || '',
     manualPaymentUsername: document.getElementById('pay-manual-username')?.value || '',
+    tonConnectEnabled: !!document.getElementById('pay-tonconnect-enabled')?.checked,
+    tonReceiverAddress: document.getElementById('pay-ton-receiver-address')?.value || '',
     cryptoEnabled: !!document.getElementById('pay-crypto-enabled')?.checked,
     cryptoTonEnabled: !!document.getElementById('pay-crypto-ton-enabled')?.checked,
     cryptoUsdtEnabled: !!document.getElementById('pay-crypto-usdt-enabled')?.checked,
