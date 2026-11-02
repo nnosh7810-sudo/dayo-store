@@ -45,6 +45,9 @@ async function connectDB() {
   try {
     await client.connect();
     db = client.db('dayoStore');
+    await db.collection('orders').createIndex({ id: 1 }, { unique: true });
+    await db.collection('orders').createIndex({ userId: 1, createdAt: -1 });
+    await db.collection('orders').createIndex({ status: 1, createdAt: -1 });
     console.log('✅ متصل بقاعدة بيانات MongoDB');
 
     const usersCollection = db.collection('users');
@@ -62,7 +65,8 @@ async function connectDB() {
         usersCount: 0,
         onlineCount: 0,
         menuLinks: {},
-        heroButton: { text: 'تسوق الآن', link: '#shop', color: '#4A90E2' }
+        heroButton: { text: 'تسوق الآن', link: '#shop', color: '#4A90E2' },
+        paymentSettings: { manualEnabled: true, manualInstructions: 'سيتم تزويدك بتعليمات التحويل بعد إنشاء الطلب.', electronicEnabled: false, electronicCheckoutUrl: '' }
       });
     }
 
@@ -742,6 +746,213 @@ app.post('/api/quick-icons/save', async (req, res) => {
     await saveQuickIconsList(icons);
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
+/* =========================================================
+   DAYO ORDERS V1 — الطلبات والدفع
+   ========================================================= */
+const ORDER_STATUSES = ['awaiting_payment', 'paid', 'processing', 'completed', 'cancelled', 'rejected'];
+const ORDER_STATUS_LABELS = {
+  awaiting_payment: 'بانتظار الدفع', paid: 'تم تأكيد الدفع', processing: 'قيد التنفيذ',
+  completed: 'مكتمل', cancelled: 'ملغي', rejected: 'مرفوض'
+};
+const ORDER_CURRENCIES = ['sar', 'usd', 'ton', 'stars'];
+
+function cleanOrderCurrency(value) {
+  const currency = String(value || '').toLowerCase();
+  if (!ORDER_CURRENCIES.includes(currency)) throw new Error('عملة الطلب غير مدعومة');
+  return currency;
+}
+function orderRound(value, currency) {
+  return currency === 'stars' ? Math.round(value) : Math.round((value + Number.EPSILON) * 1000000) / 1000000;
+}
+function getDiscountedUnitPrice(product, currency) {
+  const raw = Number(product?.prices?.[currency] || 0);
+  if (!Number.isFinite(raw) || raw <= 0) throw new Error(`المنتج ${product?.name || ''} لا يملك سعرًا بهذه العملة`);
+  const discount = Math.min(100, Math.max(0, Number(product.discount) || 0));
+  return orderRound(raw * (1 - discount / 100), currency);
+}
+async function getPaymentSettings() {
+  const store = await db.collection('store').findOne({ _id: 'main' });
+  const saved = store?.paymentSettings || {};
+  return {
+    manualEnabled: saved.manualEnabled !== false,
+    manualInstructions: typeof saved.manualInstructions === 'string' ? saved.manualInstructions : 'سيتم تزويدك بتعليمات التحويل بعد إنشاء الطلب.',
+    electronicEnabled: saved.electronicEnabled === true,
+    electronicCheckoutUrl: typeof saved.electronicCheckoutUrl === 'string' ? saved.electronicCheckoutUrl : ''
+  };
+}
+
+app.post('/api/payments/settings', async (req, res) => {
+  try {
+    await getUserFromReq(req);
+    res.json({ ok: true, settings: await getPaymentSettings() });
+  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/payments/settings/save', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية');
+    const manualEnabled = req.body?.manualEnabled !== false;
+    const electronicEnabled = req.body?.electronicEnabled === true;
+    const manualInstructions = String(req.body?.manualInstructions || '').trim().slice(0, 2000);
+    const electronicCheckoutUrl = String(req.body?.electronicCheckoutUrl || '').trim();
+    if (electronicEnabled) {
+      let parsed;
+      try { parsed = new URL(electronicCheckoutUrl); } catch { throw new Error('أدخل رابط دفع إلكتروني صحيحًا'); }
+      if (parsed.protocol !== 'https:') throw new Error('يجب أن يبدأ رابط الدفع الإلكتروني بـ HTTPS');
+    }
+    if (!manualEnabled && !electronicEnabled) throw new Error('يجب تفعيل وسيلة دفع واحدة على الأقل');
+    await db.collection('store').updateOne(
+      { _id: 'main' },
+      { $set: { paymentSettings: { manualEnabled, manualInstructions, electronicEnabled, electronicCheckoutUrl } } },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/orders/create', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    const currency = cleanOrderCurrency(req.body?.currency);
+    const paymentMethod = String(req.body?.paymentMethod || 'manual');
+    if (!['manual', 'electronic'].includes(paymentMethod)) throw new Error('طريقة الدفع غير صحيحة');
+    const settings = await getPaymentSettings();
+    if (paymentMethod === 'manual' && !settings.manualEnabled) throw new Error('الدفع اليدوي غير متاح حاليًا');
+    if (paymentMethod === 'electronic' && (!settings.electronicEnabled || !settings.electronicCheckoutUrl)) {
+      throw new Error('الدفع الإلكتروني غير مفعّل حاليًا');
+    }
+    const requestedItems = req.body?.items;
+    if (!Array.isArray(requestedItems) || requestedItems.length < 1 || requestedItems.length > 30) {
+      throw new Error('السلة فارغة أو تحتوي عددًا غير مسموح من المنتجات');
+    }
+    const merged = new Map();
+    for (const item of requestedItems) {
+      const productId = String(item?.productId || '').trim();
+      const quantity = Number(item?.quantity);
+      if (!productId || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) throw new Error('بيانات أحد المنتجات في السلة غير صحيحة');
+      merged.set(productId, (merged.get(productId) || 0) + quantity);
+    }
+    if ([...merged.values()].some(q => q > 20)) throw new Error('الحد الأعلى للكمية هو 20 للمنتج الواحد');
+
+    const lines = [];
+    let total = 0;
+    for (const [productId, quantity] of merged.entries()) {
+      const product = await db.collection('products').findOne({ id: productId });
+      if (!product) throw new Error('أحد المنتجات لم يعد متاحًا');
+      const unitPrice = getDiscountedUnitPrice(product, currency);
+      const lineTotal = orderRound(unitPrice * quantity, currency);
+      total = orderRound(total + lineTotal, currency);
+      lines.push({
+        productId: String(product.id), name: String(product.name || 'منتج').slice(0, 150),
+        quantity, unitPrice, lineTotal
+      });
+    }
+    if (!(total > 0)) throw new Error('إجمالي الطلب غير صالح');
+
+    const now = new Date();
+    const randomPart = crypto.randomBytes(3).toString('hex').toUpperCase();
+    const orderCode = `DY-${Date.now().toString(36).toUpperCase()}-${randomPart}`;
+    const order = {
+      id: crypto.randomUUID(), orderCode,
+      userId: user.id, customerName: String(user.name || 'عميل').slice(0, 100),
+      items: lines, currency, total,
+      paymentMethod,
+      paymentStatus: 'pending',
+      paymentReference: '',
+      status: 'awaiting_payment', statusLabel: ORDER_STATUS_LABELS.awaiting_payment,
+      paymentInstructions: paymentMethod === 'manual' ? settings.manualInstructions : '',
+      createdAt: now, updatedAt: now,
+      salesCountedAt: null
+    };
+    await db.collection('orders').insertOne(order);
+    res.json({
+      ok: true,
+      order: { id: order.id, orderCode, total, currency, status: order.status, paymentMethod, paymentInstructions: order.paymentInstructions },
+      checkoutUrl: paymentMethod === 'electronic' ? settings.electronicCheckoutUrl : ''
+    });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/orders/submit-reference', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    const orderId = String(req.body?.orderId || '').trim();
+    const reference = String(req.body?.reference || '').trim().slice(0, 300);
+    if (!orderId || reference.length < 3) throw new Error('أدخل رقم العملية أو مرجع التحويل بشكل صحيح');
+    const result = await db.collection('orders').updateOne(
+      { id: orderId, userId: user.id, status: 'awaiting_payment' },
+      { $set: { paymentReference: reference, paymentReferenceAt: new Date(), updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) throw new Error('الطلب غير موجود أو لم يعد بانتظار الدفع');
+    res.json({ ok: true });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/orders/mine', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    const orders = await db.collection('orders').find({ userId: user.id }).sort({ createdAt: -1 }).limit(50).toArray();
+    res.json({ ok: true, orders: orders.map(({ _id, ...order }) => order) });
+  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/orders/list', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (!['owner', 'admin'].includes(user.role)) throw new Error('إدارة الطلبات متاحة للمالك والمسؤول فقط');
+    const filter = {};
+    const requestedStatus = String(req.body?.status || 'all');
+    if (requestedStatus !== 'all') {
+      if (!ORDER_STATUSES.includes(requestedStatus)) throw new Error('حالة الطلب غير صحيحة');
+      filter.status = requestedStatus;
+    }
+    const orders = await db.collection('orders').find(filter).sort({ createdAt: -1 }).limit(200).toArray();
+    res.json({ ok: true, orders: orders.map(({ _id, ...order }) => order) });
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/orders/update-status', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية لإدارة الطلبات');
+    const orderId = String(req.body?.orderId || '');
+    const status = String(req.body?.status || '');
+    if (!orderId || !ORDER_STATUSES.includes(status)) throw new Error('بيانات تحديث الطلب غير صحيحة');
+    const orders = db.collection('orders');
+    const order = await orders.findOne({ id: orderId });
+    if (!order) throw new Error('الطلب غير موجود');
+    if (['paid', 'processing', 'completed'].includes(order.status) && status === 'cancelled') {
+      throw new Error('لا يمكن إلغاء طلب تم تأكيد دفعه من هذه الشاشة؛ يلزم إجراء استرداد منفصل');
+    }
+    if (['processing', 'completed'].includes(status) && order.paymentStatus !== 'paid') {
+      throw new Error('يجب تأكيد الدفع أولًا قبل بدء التنفيذ أو إكمال الطلب');
+    }
+    if (status === 'rejected' && order.paymentStatus === 'paid') {
+      throw new Error('لا يمكن رفض طلب تم تأكيد دفعه؛ استخدم إجراء استرداد منفصل');
+    }
+    const update = { status, statusLabel: ORDER_STATUS_LABELS[status], updatedAt: new Date(), updatedBy: user.id };
+    if (status === 'paid' && !order.salesCountedAt) {
+      const countedAt = new Date();
+      const claim = await orders.updateOne(
+        { id: orderId, $or: [{ salesCountedAt: null }, { salesCountedAt: { $exists: false } }] },
+        { $set: { ...update, salesCountedAt: countedAt, paymentStatus: 'paid' } }
+      );
+      if (claim.modifiedCount) {
+        for (const line of order.items || []) {
+          await db.collection('products').updateOne({ id: line.productId }, { $inc: { soldCount: Number(line.quantity) || 1 } });
+        }
+      } else {
+        await orders.updateOne({ id: orderId }, { $set: { ...update, paymentStatus: 'paid' } });
+      }
+    } else {
+      if (status === 'rejected') update.paymentStatus = 'rejected';
+      await orders.updateOne({ id: orderId }, { $set: update });
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
 /* =========================================================
