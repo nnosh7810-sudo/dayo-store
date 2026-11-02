@@ -28,6 +28,20 @@ let quickIcons = [];
 let heroButtonData = { text: 'تسوق الآن', link: '#shop', color: '#4A90E2' };
 let realStats = { totalUsers: 0, onlineUsers: 0, totalProducts: 0, totalSold: 0 };
 
+// DAYO Orders V1: سلة محلية، بينما يتم اعتماد الأسعار والإجمالي من الخادم.
+let cartItems = [];
+let cartCurrency = 'sar';
+let cartPaymentMethod = 'manual';
+let cartPaymentSettings = { manualEnabled: true, manualInstructions: '', electronicEnabled: false, electronicCheckoutUrl: '' };
+try { const savedCart = JSON.parse(localStorage.getItem('dayo-cart') || '[]'); if (Array.isArray(savedCart)) cartItems = savedCart.filter(x => x && typeof x.productId === 'string' && Number.isInteger(x.quantity) && x.quantity > 0 && x.quantity <= 20); } catch (_) { cartItems = []; }
+
+function saveCart() { try { localStorage.setItem('dayo-cart', JSON.stringify(cartItems)); } catch (_) {} }
+function currencyLabel(currency) { return ({ sar: 'ريال سعودي', usd: 'دولار أمريكي', ton: 'TON', stars: 'نجوم تيليجرام' })[currency] || currency; }
+function currencySymbol(currency) { return ({ sar: 'ر.س', usd: '$', ton: 'TON', stars: '⭐' })[currency] || currency; }
+function money(value, currency) { return `${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: currency === 'stars' ? 0 : 6 })} ${currencySymbol(currency)}`; }
+function cartCount() { return cartItems.reduce((sum, item) => sum + item.quantity, 0); }
+function discountedPrice(product, currency) { const raw = Number(product?.prices?.[currency] || 0); return raw > 0 ? raw * (1 - Math.min(100, Math.max(0, Number(product.discount) || 0)) / 100) : 0; }
+
 
 /* ===== إعدادات المظهر: داكن / فاتح ===== */
 function applyTheme(theme, persist = true) {
@@ -1245,14 +1259,16 @@ async function openAdminPanel() {
   if (!content) return;
   content.innerHTML = `<div class="custom-loader-wrapper"><div class="loader"><p class="loader-text">جاري التحميل...</p><span class="load"></span></div></div>`;
 
-  const [data, sliderData, staffData, sectionsData, catsData, qiData, badgesData] = await Promise.all([
+  const [data, sliderData, staffData, sectionsData, catsData, qiData, badgesData, paymentData, ordersData] = await Promise.all([
     apiCall('/api/products'),
     userRole === 'owner' ? apiCall('/api/slider') : Promise.resolve({ ok: false, slides: [] }),
     (userRole === 'owner' || userRole === 'admin') ? apiCall('/api/users/list') : Promise.resolve({ ok: false, staff: [] }),
     apiCall('/api/sections'),
     apiCall('/api/categories'),
     apiCall('/api/quick-icons'),
-    apiCall('/api/badges')
+    apiCall('/api/badges'),
+    (userRole === 'owner' || userRole === 'admin') ? apiCall('/api/payments/settings') : Promise.resolve({ ok: false, settings: {} }),
+    (userRole === 'owner' || userRole === 'admin') ? apiCall('/api/orders/list') : Promise.resolve({ ok: false, orders: [] })
   ]);
 
   if (sectionsData.ok && Array.isArray(sectionsData.sections)) {
@@ -1359,6 +1375,8 @@ async function openAdminPanel() {
     ${userRole === 'owner' || userRole === 'admin' ? renderCategoriesAdmin() : ''}
     ${userRole === 'owner' || userRole === 'admin' ? renderBadgesAdmin() : ''}
     ${userRole === 'owner' || userRole === 'admin' ? renderQuickIconsAdmin() : ''}
+    ${userRole === 'owner' || userRole === 'admin' ? renderPaymentSettingsAdmin(paymentData.settings || {}) : ''}
+    ${userRole === 'owner' || userRole === 'admin' ? renderOrdersAdmin(ordersData.orders || []) : ''}
     ${userRole === 'owner' ? renderHeroButtonAdmin() : ''}
 
     ${userRole === 'owner' ? `
@@ -1700,7 +1718,210 @@ async function loadProductPage(productId) {
 function buyProduct(productId) {
   const product = currentShopProducts.find(p => String(p.id) === String(productId));
   if (!product) return showMessage('المنتج غير متاح حالياً.');
-  showMessage('تم اختيار المنتج. لإتمام الطلب، تواصل مع إدارة المتجر. لن تُحتسب المبيعة إلا بعد تأكيد الدفع.');
+  addToCart(productId, 1);
+  openCart();
+}
+
+function addToCart(productId, quantity = 1) {
+  const id = String(productId);
+  const item = cartItems.find(x => x.productId === id);
+  if (item) item.quantity = Math.min(20, item.quantity + quantity);
+  else cartItems.push({ productId: id, quantity: Math.min(20, quantity) });
+  saveCart();
+}
+
+function changeCartQuantity(productId, delta) {
+  try { productId = decodeURIComponent(productId); } catch (_) {}
+  const item = cartItems.find(x => x.productId === String(productId));
+  if (!item) return;
+  item.quantity += Number(delta) || 0;
+  if (item.quantity <= 0) cartItems = cartItems.filter(x => x.productId !== item.productId);
+  else item.quantity = Math.min(20, item.quantity);
+  saveCart();
+  renderCartPage();
+}
+
+function removeCartItem(productId) {
+  try { productId = decodeURIComponent(productId); } catch (_) {}
+  cartItems = cartItems.filter(x => x.productId !== String(productId));
+  saveCart();
+  renderCartPage();
+}
+
+async function ensureCartProducts() {
+  const missing = cartItems.some(item => !currentShopProducts.some(p => String(p.id) === item.productId));
+  if (missing || !currentShopProducts.length) {
+    const response = await apiCall('/api/products');
+    if (response.ok && Array.isArray(response.products)) currentShopProducts = response.products;
+  }
+  cartItems = cartItems.filter(item => currentShopProducts.some(p => String(p.id) === item.productId));
+  saveCart();
+}
+
+function ensureDayoDynamicPage() {
+  let page = document.getElementById('page-dayo-dynamic');
+  if (!page) {
+    page = document.createElement('div');
+    page.id = 'page-dayo-dynamic';
+    page.className = 'page dayo-dynamic-page';
+    document.body.insertBefore(page, document.getElementById('page-admin') || null);
+  }
+  return page;
+}
+
+function activateDayoDynamicPage() {
+  document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+  ensureDayoDynamicPage().classList.add('active');
+  safeAddActive('page-nav');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function openCart() {
+  activateDayoDynamicPage();
+  const page = ensureDayoDynamicPage();
+  page.innerHTML = '<div class="dayo-page-loading">جاري تجهيز السلة...</div>';
+  try {
+    await ensureCartProducts();
+    const settingsResponse = await apiCall('/api/payments/settings');
+    if (settingsResponse.ok && settingsResponse.settings) cartPaymentSettings = settingsResponse.settings;
+    renderCartPage();
+  } catch (error) {
+    page.innerHTML = `<div class="dayo-page-head"><h2>سلة المشتريات</h2></div><p class="dayo-muted">${escapeHTML(error.message || 'تعذر تحميل السلة')}</p>`;
+  }
+}
+
+function renderCartPage() {
+  const page = ensureDayoDynamicPage();
+  const validItems = cartItems.map(item => ({ ...item, product: currentShopProducts.find(p => String(p.id) === item.productId) })).filter(item => item.product);
+  const currencies = ['sar', 'usd', 'ton', 'stars'].filter(currency => validItems.length && validItems.every(item => Number(item.product.prices?.[currency]) > 0));
+  if (!currencies.includes(cartCurrency)) cartCurrency = currencies.includes('sar') ? 'sar' : (currencies[0] || 'sar');
+  const paymentOptions = [];
+  if (cartPaymentSettings.manualEnabled) paymentOptions.push('<option value="manual">تحويل يدوي</option>');
+  if (cartPaymentSettings.electronicEnabled && cartPaymentSettings.electronicCheckoutUrl) paymentOptions.push('<option value="electronic">دفع إلكتروني</option>');
+  if (!paymentOptions.some(option => option.includes(`value="${cartPaymentMethod}"`))) cartPaymentMethod = cartPaymentSettings.manualEnabled ? 'manual' : 'electronic';
+
+  const itemsHTML = validItems.map(({ product, quantity }) => {
+    const unit = discountedPrice(product, cartCurrency);
+    const image = safeImageURL(product.image);
+    return `<article class="dayo-cart-item">
+      ${image ? `<img src="${escapeHTML(image)}" alt="" class="dayo-cart-image">` : '<div class="dayo-cart-image dayo-cart-placeholder">📦</div>'}
+      <div class="dayo-cart-info"><strong>${escapeHTML(product.name)}</strong><small>${money(unit, cartCurrency)} للقطعة</small>
+        <div class="dayo-quantity"><button onclick="changeCartQuantity('${encodedArg(product.id)}',-1)" aria-label="تقليل">−</button><b>${quantity}</b><button onclick="changeCartQuantity('${encodedArg(product.id)}',1)" aria-label="زيادة">+</button><button class="dayo-remove" onclick="removeCartItem('${encodedArg(product.id)}')">حذف</button></div>
+      </div><strong class="dayo-line-total">${money(unit * quantity, cartCurrency)}</strong>
+    </article>`;
+  }).join('');
+  const subtotal = validItems.reduce((sum, item) => sum + discountedPrice(item.product, cartCurrency) * item.quantity, 0);
+  const noCurrency = validItems.length > 0 && currencies.length === 0;
+  const checkoutDisabled = !validItems.length || noCurrency || !paymentOptions.length;
+
+  page.innerHTML = `<div class="dayo-page-head"><button class="dayo-back" onclick="goHome()">‹</button><div><h2>سلة المشتريات</h2><small>${cartCount()} منتج</small></div><button class="dayo-secondary" onclick="openMyOrders()">طلباتي</button></div>
+    ${validItems.length ? `<div class="dayo-cart-list">${itemsHTML}</div>
+      <section class="dayo-checkout-card"><h3>إتمام الطلب</h3>
+        <label>عملة الدفع</label><select id="cart-currency" onchange="changeCartCurrency(this.value)" ${noCurrency ? 'disabled' : ''}>${currencies.map(currency => `<option value="${currency}" ${currency === cartCurrency ? 'selected' : ''}>${escapeHTML(currencyLabel(currency))}</option>`).join('')}</select>
+        ${noCurrency ? '<p class="dayo-warning">لا توجد عملة مشتركة مسعّرة لجميع المنتجات في السلة. أزل بعض المنتجات أو اختر منتجات لها عملة مشتركة.</p>' : ''}
+        <div class="dayo-total-row"><span>الإجمالي</span><strong>${money(subtotal, cartCurrency)}</strong></div>
+        <label>طريقة الدفع</label><select id="cart-payment-method" onchange="changeCartPaymentMethod(this.value)" ${paymentOptions.length ? '' : 'disabled'}>${paymentOptions.join('')}</select>
+        ${cartPaymentMethod === 'manual' ? `<div class="dayo-payment-note"><strong>تعليمات التحويل</strong><p>${escapeHTML(cartPaymentSettings.manualInstructions || 'ستظهر تعليمات التحويل بعد إنشاء الطلب.')}</p></div>` : '<p class="dayo-muted">بعد إنشاء الطلب سيظهر لك رابط بوابة الدفع. يبقى الطلب بانتظار تأكيد الإدارة حتى يتم ربط التحقق الآلي بمزود الدفع.</p>'}
+        <button class="dayo-primary" onclick="submitCartOrder()" ${checkoutDisabled ? 'disabled' : ''}>تأكيد وإنشاء الطلب</button>
+        ${!paymentOptions.length ? '<p class="dayo-warning">لم يفعّل المتجر وسيلة دفع بعد. تواصل مع الإدارة.</p>' : ''}
+      </section>` : `<div class="dayo-empty-cart"><div>🛒</div><h3>سلتك فارغة</h3><p>أضف المنتجات التي ترغب بشرائها، وستظهر هنا.</p><button class="dayo-primary" onclick="openShop()">تصفح المنتجات</button><button class="dayo-secondary" onclick="openMyOrders()">عرض طلباتي</button></div>`}`;
+}
+
+function changeCartCurrency(value) { cartCurrency = value; renderCartPage(); }
+function changeCartPaymentMethod(value) { cartPaymentMethod = value; renderCartPage(); }
+
+async function submitCartOrder() {
+  if (!cartItems.length) return showMessage('السلة فارغة.');
+  const button = document.querySelector('#page-dayo-dynamic .dayo-primary');
+  if (button) { button.disabled = true; button.textContent = 'جاري إنشاء الطلب...'; }
+  try {
+    const response = await apiCall('/api/orders/create', {
+      items: cartItems.map(item => ({ productId: item.productId, quantity: item.quantity })),
+      currency: cartCurrency, paymentMethod: cartPaymentMethod
+    });
+    if (!response.ok || !response.order) throw new Error(response.error || 'تعذر إنشاء الطلب');
+    cartItems = []; saveCart();
+    const order = response.order;
+    const page = ensureDayoDynamicPage();
+    page.innerHTML = `<div class="dayo-order-success"><div class="dayo-success-icon">✓</div><h2>تم إنشاء طلبك</h2><p>رقم الطلب</p><strong class="dayo-order-code">${escapeHTML(order.orderCode)}</strong><div class="dayo-total-row"><span>الإجمالي</span><strong>${money(order.total, order.currency)}</strong></div>
+      <p class="dayo-muted">حالة الطلب: بانتظار الدفع. لن يتم احتساب المبيعة قبل تأكيد الدفع من الإدارة.</p>
+      ${order.paymentInstructions ? `<div class="dayo-payment-note"><strong>تعليمات التحويل</strong><p>${escapeHTML(order.paymentInstructions)}</p></div>` : ''}
+      ${response.checkoutUrl ? `<a class="dayo-primary dayo-checkout-link" href="${escapeHTML(safeWebURL(response.checkoutUrl))}" target="_blank" rel="noopener noreferrer">الانتقال إلى بوابة الدفع</a>` : ''}
+      <div class="dayo-payment-note"><strong>بعد إتمام الدفع</strong><p>أدخل رقم العملية أو مرجع التحويل ليتمكن فريق DAYO من مراجعة الدفع.</p><input id="order-payment-reference" type="text" maxlength="300" placeholder="رقم العملية / مرجع التحويل"><button class="dayo-primary" onclick="submitOrderPaymentReference('${encodedArg(order.id)}')">إرسال مرجع الدفع</button></div>
+      <button class="dayo-secondary" onclick="openMyOrders()">متابعة طلباتي</button><button class="dayo-secondary" onclick="openShop()">العودة للمتجر</button></div>`;
+  } catch (error) {
+    showMessage(error.message || 'حدث خطأ أثناء إنشاء الطلب.');
+    renderCartPage();
+  }
+}
+
+async function submitOrderPaymentReference(orderId) {
+  try { orderId = decodeURIComponent(orderId); } catch (_) {}
+  const reference = document.getElementById('order-payment-reference')?.value?.trim() || '';
+  if (reference.length < 3) return showMessage('أدخل رقم العملية أو مرجع التحويل أولًا.');
+  const response = await apiCall('/api/orders/submit-reference', { orderId, reference });
+  if (response.ok) showMessage('تم إرسال مرجع الدفع. سيقوم فريق المتجر بمراجعته.');
+  else showMessage(response.error || 'تعذر إرسال المرجع.');
+}
+
+const ORDER_STATUS_TEXT = { awaiting_payment: 'بانتظار الدفع', paid: 'تم تأكيد الدفع', processing: 'قيد التنفيذ', completed: 'مكتمل', cancelled: 'ملغي', rejected: 'مرفوض' };
+async function openMyOrders() {
+  activateDayoDynamicPage();
+  const page = ensureDayoDynamicPage();
+  page.innerHTML = '<div class="dayo-page-loading">جاري تحميل طلباتك...</div>';
+  try {
+    const response = await apiCall('/api/orders/mine');
+    if (!response.ok) throw new Error(response.error || 'تعذر تحميل الطلبات');
+    const orders = Array.isArray(response.orders) ? response.orders : [];
+    page.innerHTML = `<div class="dayo-page-head"><button class="dayo-back" onclick="openCart()">‹</button><div><h2>طلباتي</h2><small>${orders.length} طلب</small></div><button class="dayo-secondary" onclick="openCart()">السلة</button></div>
+      ${orders.length ? `<div class="dayo-orders-list">${orders.map(order => `<article class="dayo-order-card"><div class="dayo-order-card-head"><strong>${escapeHTML(order.orderCode || 'طلب')}</strong><span class="dayo-status status-${escapeHTML(order.status)}">${escapeHTML(ORDER_STATUS_TEXT[order.status] || order.status)}</span></div>
+        <div class="dayo-order-lines">${(order.items || []).map(item => `<div>${escapeHTML(item.name)} × ${Number(item.quantity) || 1}</div>`).join('')}</div>
+        <div class="dayo-total-row"><span>${escapeHTML(currencyLabel(order.currency))}</span><strong>${money(order.total, order.currency)}</strong></div>
+        <small class="dayo-muted">${order.createdAt ? new Date(order.createdAt).toLocaleString('ar-SA') : ''}</small>
+      </article>`).join('')}</div>` : '<div class="dayo-empty-cart"><div>🧾</div><h3>لا توجد طلبات حتى الآن</h3><p>عند إتمام أول عملية شراء ستظهر تفاصيلها هنا.</p><button class="dayo-primary" onclick="openShop()">تصفح المتجر</button></div>'}`;
+  } catch (error) { page.innerHTML = `<div class="dayo-page-head"><h2>طلباتي</h2></div><p class="dayo-warning">${escapeHTML(error.message)}</p>`; }
+}
+
+function renderPaymentSettingsAdmin(settings = {}) {
+  return `<hr style="border-color:#333;margin:20px 0;"><section class="admin-form"><h3>إعدادات الدفع والطلبات</h3>
+    <label><input id="pay-manual-enabled" type="checkbox" ${settings.manualEnabled !== false ? 'checked' : ''}> تفعيل التحويل اليدوي</label>
+    <label>تعليمات التحويل التي تظهر للعميل</label><textarea id="pay-manual-instructions" rows="4" placeholder="اسم البنك، رقم الحساب أو المحفظة...">${escapeHTML(settings.manualInstructions || '')}</textarea>
+    <label><input id="pay-electronic-enabled" type="checkbox" ${settings.electronicEnabled === true ? 'checked' : ''}> تفعيل رابط الدفع الإلكتروني</label>
+    <label>رابط بوابة الدفع (HTTPS)</label><input id="pay-electronic-url" type="text" value="${escapeHTML(settings.electronicCheckoutUrl || '')}" placeholder="https://...">
+    <p style="font-size:11px;color:#a0c4ff;line-height:1.7">تنبيه: رابط الدفع الخارجي لا يؤكد الدفع تلقائيًا في هذه النسخة؛ يجب على الإدارة مراجعة العملية وتحديث حالة الطلب. الربط الآلي يحتاج تكامل API وWebhook مع مزود الدفع.</p>
+    <button class="primary" onclick="savePaymentSettings()">حفظ إعدادات الدفع</button></section>`;
+}
+
+function renderOrdersAdmin(orders = []) {
+  const statuses = Object.entries(ORDER_STATUS_TEXT);
+  const cards = orders.map(order => `<article class="admin-section-card" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>${escapeHTML(order.orderCode || 'طلب')}</strong><b>${money(order.total, order.currency)}</b></div>
+    <div style="font-size:12px;color:#a0c4ff;margin:7px 0">العميل: ${escapeHTML(order.customerName || 'عميل')} · ID: ${escapeHTML(order.userId || '')}</div>
+    <div style="font-size:12px;color:#fff;margin-bottom:7px">${(order.items || []).map(item => `${escapeHTML(item.name)} × ${Number(item.quantity) || 1}`).join('، ')}</div>
+    <div style="font-size:12px;color:#a0c4ff;margin-bottom:8px">الدفع: ${order.paymentMethod === 'electronic' ? 'إلكتروني خارجي' : 'تحويل يدوي'} · مرجع: ${escapeHTML(order.paymentReference || '—')}</div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap"><select id="order-status-${escapeHTML(order.id)}" style="flex:1;min-width:150px;padding:9px;border-radius:7px">${statuses.map(([key,label]) => `<option value="${key}" ${key === order.status ? 'selected' : ''}>${label}</option>`).join('')}</select><button onclick="updateOrderStatus('${encodedArg(order.id)}')" style="background:#4A90E2;color:#fff;border:0;border-radius:7px;padding:8px 12px">حفظ الحالة</button></div>
+  </article>`).join('');
+  return `<hr style="border-color:#333;margin:20px 0;"><section><h3 style="color:inherit">إدارة الطلبات (${orders.length})</h3><button onclick="refreshAdminOrders()" style="background:#315d91;color:#fff;border:0;padding:8px 12px;border-radius:7px;margin-bottom:10px">تحديث الطلبات</button>${cards || '<p>لا توجد طلبات حتى الآن.</p>'}</section>`;
+}
+
+async function savePaymentSettings() {
+  const payload = {
+    manualEnabled: !!document.getElementById('pay-manual-enabled')?.checked,
+    manualInstructions: document.getElementById('pay-manual-instructions')?.value || '',
+    electronicEnabled: !!document.getElementById('pay-electronic-enabled')?.checked,
+    electronicCheckoutUrl: document.getElementById('pay-electronic-url')?.value || ''
+  };
+  const response = await apiCall('/api/payments/settings/save', payload);
+  if (response.ok) showMessage('تم حفظ إعدادات الدفع.'); else showMessage(response.error || 'تعذر حفظ الإعدادات.');
+}
+
+async function refreshAdminOrders() { openAdminPanel(); }
+async function updateOrderStatus(orderId) {
+  try { orderId = decodeURIComponent(orderId); } catch (_) {}
+  const status = document.getElementById(`order-status-${orderId}`)?.value;
+  if (!status) return;
+  const response = await apiCall('/api/orders/update-status', { orderId, status });
+  if (response.ok) { showMessage('تم تحديث حالة الطلب.'); openAdminPanel(); }
+  else showMessage(response.error || 'تعذر تحديث الطلب.');
 }
 
 function copyProductLink(productId) {
@@ -1750,7 +1971,7 @@ function showEmptyPage(title, icon, message) {
 }
 
 function openFavorites() { showEmptyPage('المفضلة', '❤️', 'لا توجد منتجات في المفضلة بعد'); }
-function openCart() { showEmptyPage('السلة', '🛒', 'السلة فاضية'); }
+// openCart is implemented above as the full shopping-cart and checkout flow.
 function openSupport() { showEmptyPage('الدعم الفني', '🎧', 'تواصل معنا عبر تيليجرام أو البريد'); }
 
 /* ============================================================
