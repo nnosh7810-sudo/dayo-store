@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '10mb', verify: (req, res, buffer) => { req.rawBody = buffer.toString('utf8'); } }));
 app.use(express.static('public'));
 
 // حد بسيط للطلبات لمنع الإغراق. في بيئة متعددة الخوادم استخدم Redis أو rate-limit package.
@@ -27,6 +27,9 @@ app.use('/api', (req, res, next) => {
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGODB_URI = process.env.MONGODB_URI;
 const OWNER_TELEGRAM_ID = process.env.OWNER_TELEGRAM_ID || '51442749';
+const ENV_CRYPTO_PAY_API_TOKEN = process.env.CRYPTO_PAY_API_TOKEN || '';
+const ENV_TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
+const ENV_PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
 
 if (!BOT_TOKEN) throw new Error('يرجى ضبط BOT_TOKEN في متغيرات البيئة');
 if (!MONGODB_URI) throw new Error('يرجى ضبط MONGODB_URI في متغيرات البيئة');
@@ -41,6 +44,43 @@ const client = new MongoClient(MONGODB_URI, {
 
 let db;
 
+// Payment provider credentials entered from the dashboard are encrypted at rest.
+// The encryption key is derived from the server-side BOT_TOKEN and never sent to clients.
+function paymentEncryptionKey() {
+  return crypto.createHash('sha256').update(`${BOT_TOKEN}:DAYO_PAYMENT_SETTINGS_V1`).digest();
+}
+function encryptPaymentSecret(value) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', paymentEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
+  return `${iv.toString('hex')}.${cipher.getAuthTag().toString('hex')}.${encrypted.toString('hex')}`;
+}
+function decryptPaymentSecret(value) {
+  if (!value || typeof value !== 'string') return '';
+  try {
+    const [ivHex, tagHex, dataHex] = value.split('.');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', paymentEncryptionKey(), Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    return Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]).toString('utf8');
+  } catch (_) { return ''; }
+}
+async function getPaymentConfigRaw() {
+  const store = await db.collection('store').findOne({ _id: 'main' });
+  return store?.paymentSettings || {};
+}
+async function getCryptoPayToken() {
+  const saved = await getPaymentConfigRaw();
+  return decryptPaymentSecret(saved.cryptoPayTokenEnc) || ENV_CRYPTO_PAY_API_TOKEN;
+}
+async function getStarsWebhookSecret() {
+  const saved = await getPaymentConfigRaw();
+  return decryptPaymentSecret(saved.starsWebhookSecretEnc) || ENV_TELEGRAM_WEBHOOK_SECRET;
+}
+async function getPublicBaseUrl() {
+  const saved = await getPaymentConfigRaw();
+  return String(saved.publicBaseUrl || ENV_PUBLIC_BASE_URL || '').replace(/\/$/, '');
+}
+
 async function connectDB() {
   try {
     await client.connect();
@@ -48,6 +88,8 @@ async function connectDB() {
     await db.collection('orders').createIndex({ id: 1 }, { unique: true });
     await db.collection('orders').createIndex({ userId: 1, createdAt: -1 });
     await db.collection('orders').createIndex({ status: 1, createdAt: -1 });
+    await db.collection('notifications').createIndex({ userId: 1, createdAt: -1 });
+    await db.collection('notifications').createIndex({ userId: 1, readAt: 1 });
     console.log('✅ متصل بقاعدة بيانات MongoDB');
 
     const usersCollection = db.collection('users');
@@ -66,7 +108,7 @@ async function connectDB() {
         onlineCount: 0,
         menuLinks: {},
         heroButton: { text: 'تسوق الآن', link: '#shop', color: '#4A90E2' },
-        paymentSettings: { manualEnabled: true, manualInstructions: 'سيتم تزويدك بتعليمات التحويل بعد إنشاء الطلب.', electronicEnabled: false, electronicCheckoutUrl: '' }
+        paymentSettings: { manualEnabled: true, manualInstructions: '', manualPaymentUsername: '' }
       });
     }
 
@@ -749,6 +791,163 @@ app.post('/api/quick-icons/save', async (req, res) => {
 });
 
 /* =========================================================
+   DAYO V2 — إشعارات + بوابات الدفع
+   ========================================================= */
+async function addNotification(userId, title, body, type = 'info', link = 'orders', meta = {}) {
+  if (!userId) return;
+  await db.collection('notifications').insertOne({
+    id: crypto.randomUUID(), userId: String(userId),
+    title: String(title || '').slice(0, 120), body: String(body || '').slice(0, 500),
+    type: ['success', 'warning', 'offer', 'info'].includes(type) ? type : 'info',
+    link: String(link || 'orders').slice(0, 120), meta,
+    readAt: null, createdAt: new Date()
+  });
+}
+
+async function notifyAdmins(title, body, type = 'info', link = 'admin-orders') {
+  const admins = await db.collection('users').find({ role: { $in: ['owner', 'admin'] } }, { projection: { _id: 1 } }).toArray();
+  await Promise.all(admins.map(admin => addNotification(String(admin._id), title, body, type, link)));
+}
+
+async function telegramApi(method, payload) {
+  const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) throw new Error(data.description || `Telegram API ${method} failed`);
+  return data.result;
+}
+
+async function createCryptoPayInvoice(order) {
+  const cryptoToken = await getCryptoPayToken();
+  const publicBaseUrl = await getPublicBaseUrl();
+  if (!cryptoToken || !publicBaseUrl) throw new Error('الدفع بالعملات الرقمية غير مهيأ. افتح إعدادات الدفع في لوحة التحكم وأدخل رمز Crypto Pay ورابط المتجر.');
+  const asset = order.currency === 'ton' ? 'TON' : (order.currency === 'usd' ? 'USDT' : '');
+  if (!asset) throw new Error('عملة Crypto Pay غير مدعومة');
+  const response = await fetch('https://pay.crypt.bot/api/createInvoice', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Crypto-Pay-API-Token': cryptoToken },
+    body: JSON.stringify({
+      asset, amount: String(order.total), description: `DAYO STORE ${order.orderCode}`,
+      payload: order.id, allow_comments: false, allow_anonymous: false, expires_in: 1800,
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok || !data.result?.invoice_id || !data.result?.pay_url) {
+    throw new Error(data.error?.name || data.description || 'تعذر إنشاء فاتورة العملات الرقمية');
+  }
+  return data.result;
+}
+
+async function createStarsInvoice(order) {
+  const webhookSecret = await getStarsWebhookSecret();
+  const publicBaseUrl = await getPublicBaseUrl();
+  if (!webhookSecret || !publicBaseUrl) throw new Error('دفع Stars غير مهيأ. افتح إعدادات الدفع في لوحة التحكم وأكمل إعداد Webhook.');
+  const title = `DAYO ${order.orderCode}`.slice(0, 32);
+  const description = `دفع طلب DAYO STORE رقم ${order.orderCode}`.slice(0, 255);
+  return telegramApi('createInvoiceLink', {
+    title, description, payload: order.id, provider_token: '', currency: 'XTR',
+    prices: [{ label: `طلب ${order.orderCode}`.slice(0, 32), amount: Math.round(order.total) }]
+  });
+}
+
+async function markOrderPaid(order, source, chargeReference = '') {
+  const orders = db.collection('orders');
+  const now = new Date();
+  const result = await orders.updateOne(
+    { id: order.id, status: 'awaiting_payment', paymentStatus: { $ne: 'paid' } },
+    { $set: {
+      status: 'paid', statusLabel: ORDER_STATUS_LABELS.paid, paymentStatus: 'paid',
+      paidAt: now, updatedAt: now, paymentConfirmedBy: source,
+      paymentReference: String(chargeReference || '').slice(0, 300)
+    } }
+  );
+  if (result.modifiedCount) {
+    if (!order.salesCountedAt) {
+      await orders.updateOne({ id: order.id, $or: [{ salesCountedAt: null }, { salesCountedAt: { $exists: false } }] }, { $set: { salesCountedAt: now } });
+      for (const line of order.items || []) {
+        await db.collection('products').updateOne({ id: line.productId }, { $inc: { soldCount: Number(line.quantity) || 1 } });
+      }
+    }
+    await Promise.allSettled([
+      addNotification(order.userId, 'تم تأكيد الدفع', `تم استلام دفعة طلبك ${order.orderCode} بنجاح. طلبك بانتظار التنفيذ.`, 'success', 'orders', { orderId: order.id }),
+      notifyAdmins('تم استلام دفعة', `تم تأكيد دفع الطلب ${order.orderCode}.`, 'success')
+    ]);
+  }
+  return result.modifiedCount > 0;
+}
+
+/* إشعارات العملاء والإدارة */
+app.post('/api/notifications/mine', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    const rows = await db.collection('notifications').find({ userId: String(user.id) }).sort({ createdAt: -1 }).limit(100).toArray();
+    const unread = rows.filter(row => !row.readAt).length;
+    res.json({ ok: true, unread, notifications: rows.map(({ _id, ...row }) => row) });
+  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/notifications/read', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).slice(0, 100) : [];
+    const filter = { userId: String(user.id), readAt: null };
+    if (ids.length) filter.id = { $in: ids };
+    const result = await db.collection('notifications').updateMany(filter, { $set: { readAt: new Date() } });
+    res.json({ ok: true, modified: result.modifiedCount });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
+/* Webhook Crypto Pay: يرسل إشعارًا موثوقًا بعد دفع فاتورة TON أو USDT. */
+app.post('/api/cryptopay/webhook', async (req, res) => {
+  try {
+    const cryptoToken = await getCryptoPayToken();
+    if (!cryptoToken) return res.status(503).send('Crypto Pay is not configured');
+    const signature = String(req.headers['crypto-pay-api-signature'] || '');
+    const secret = crypto.createHash('sha256').update(cryptoToken).digest();
+    const expected = crypto.createHmac('sha256', secret).update(req.rawBody || '').digest('hex');
+    const a = Buffer.from(signature, 'hex'); const b = Buffer.from(expected, 'hex');
+    if (!signature || a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).send('Invalid signature');
+    const update = req.body || {};
+    if (update.update_type !== 'invoice_paid') return res.status(200).send('ignored');
+    const invoice = update.payload || {};
+    const order = await db.collection('orders').findOne({ id: String(invoice.payload || ''), paymentMethod: 'cryptopay' });
+    if (!order || String(order.providerInvoiceId || '') !== String(invoice.invoice_id || '')) return res.status(200).send('unknown invoice');
+    const expectedAsset = order.currency === 'ton' ? 'TON' : 'USDT';
+    if (invoice.status !== 'paid' || invoice.asset !== expectedAsset || Number(invoice.amount) !== Number(order.total)) {
+      return res.status(200).send('payment mismatch');
+    }
+    await markOrderPaid(order, 'cryptopay', String(invoice.hash || invoice.invoice_id));
+    return res.status(200).send('OK');
+  } catch (err) { console.error('Crypto Pay webhook error:', err.message); return res.status(500).send('Webhook error'); }
+});
+
+/* Webhook Telegram Stars: يجيب على pre_checkout_query ثم يعتمد successful_payment فقط. */
+app.post('/api/telegram/webhook', async (req, res) => {
+  try {
+    const webhookSecret = await getStarsWebhookSecret();
+    if (!webhookSecret || req.headers['x-telegram-bot-api-secret-token'] !== webhookSecret) return res.status(401).send('Unauthorized');
+    const update = req.body || {};
+    if (update.pre_checkout_query) {
+      const query = update.pre_checkout_query;
+      const order = await db.collection('orders').findOne({ id: String(query.invoice_payload || ''), paymentMethod: 'stars', status: 'awaiting_payment' });
+      const valid = !!order && String(order.userId) === String(query.from?.id) && query.currency === 'XTR' && Number(query.total_amount) === Math.round(Number(order.total));
+      await telegramApi('answerPreCheckoutQuery', { pre_checkout_query_id: query.id, ok: valid, ...(valid ? {} : { error_message: 'تعذر التحقق من الطلب. أعد إنشاء الطلب من DAYO STORE.' }) });
+    }
+    const message = update.message;
+    const payment = message?.successful_payment;
+    if (payment) {
+      const order = await db.collection('orders').findOne({ id: String(payment.invoice_payload || ''), paymentMethod: 'stars' });
+      if (order && String(order.userId) === String(message.from?.id) && payment.currency === 'XTR' && Number(payment.total_amount) === Math.round(Number(order.total))) {
+        await db.collection('orders').updateOne({ id: order.id }, { $set: { telegramPaymentChargeId: payment.telegram_payment_charge_id || '', providerPaymentChargeId: payment.provider_payment_charge_id || '' } });
+        await markOrderPaid(order, 'telegram_stars', payment.telegram_payment_charge_id || '');
+      }
+    }
+    res.status(200).send('OK');
+  } catch (err) { console.error('Telegram payment webhook error:', err.message); res.status(200).send('OK'); }
+});
+
+/* =========================================================
    DAYO ORDERS V1 — الطلبات والدفع
    ========================================================= */
 const ORDER_STATUSES = ['awaiting_payment', 'paid', 'processing', 'completed', 'cancelled', 'rejected'];
@@ -756,7 +955,7 @@ const ORDER_STATUS_LABELS = {
   awaiting_payment: 'بانتظار الدفع', paid: 'تم تأكيد الدفع', processing: 'قيد التنفيذ',
   completed: 'مكتمل', cancelled: 'ملغي', rejected: 'مرفوض'
 };
-const ORDER_CURRENCIES = ['sar', 'usd', 'ton', 'stars'];
+const ORDER_CURRENCIES = ['sar', 'usd', 'ton', 'stars']; // usd هنا تعني USDT على شبكة TON
 
 function cleanOrderCurrency(value) {
   const currency = String(value || '').toLowerCase();
@@ -766,6 +965,8 @@ function cleanOrderCurrency(value) {
 function orderRound(value, currency) {
   return currency === 'stars' ? Math.round(value) : Math.round((value + Number.EPSILON) * 1000000) / 1000000;
 }
+function moneyForServer(value, currency) { return `${Number(value || 0)} ${{sar:'ر.س',usd:'USDT',ton:'TON',stars:'⭐'}[currency] || currency}`; }
+
 function getDiscountedUnitPrice(product, currency) {
   const raw = Number(product?.prices?.[currency] || 0);
   if (!Number.isFinite(raw) || raw <= 0) throw new Error(`المنتج ${product?.name || ''} لا يملك سعرًا بهذه العملة`);
@@ -773,21 +974,51 @@ function getDiscountedUnitPrice(product, currency) {
   return orderRound(raw * (1 - discount / 100), currency);
 }
 async function getPaymentSettings() {
-  const store = await db.collection('store').findOne({ _id: 'main' });
-  const saved = store?.paymentSettings || {};
+  const saved = await getPaymentConfigRaw();
+  const cryptoToken = await getCryptoPayToken();
+  const publicBaseUrl = await getPublicBaseUrl();
+  const starsSecret = await getStarsWebhookSecret();
   return {
     manualEnabled: saved.manualEnabled !== false,
-    manualInstructions: typeof saved.manualInstructions === 'string' ? saved.manualInstructions : 'سيتم تزويدك بتعليمات التحويل بعد إنشاء الطلب.',
-    electronicEnabled: saved.electronicEnabled === true,
-    electronicCheckoutUrl: typeof saved.electronicCheckoutUrl === 'string' ? saved.electronicCheckoutUrl : ''
+    manualInstructions: typeof saved.manualInstructions === 'string' ? saved.manualInstructions : '',
+    manualPaymentUsername: typeof saved.manualPaymentUsername === 'string' ? saved.manualPaymentUsername : '',
+    cryptoEnabled: saved.cryptoEnabled !== false && !!(cryptoToken && publicBaseUrl) && (saved.cryptoWebhookConfigured === true || !!(ENV_CRYPTO_PAY_API_TOKEN && ENV_PUBLIC_BASE_URL)),
+    cryptoWebhookConfigured: saved.cryptoWebhookConfigured === true || !!(ENV_CRYPTO_PAY_API_TOKEN && ENV_PUBLIC_BASE_URL),
+    cryptoTonEnabled: saved.cryptoTonEnabled !== false,
+    cryptoUsdtEnabled: saved.cryptoUsdtEnabled !== false,
+    cryptoTokenConfigured: !!cryptoToken,
+    starsEnabled: saved.starsEnabled !== false && !!(starsSecret && publicBaseUrl) && (saved.starsWebhookConfigured === true || !!(ENV_TELEGRAM_WEBHOOK_SECRET && ENV_PUBLIC_BASE_URL)),
+    starsSecretConfigured: !!starsSecret,
+    publicBaseUrl,
+    cryptoWebhookUrl: publicBaseUrl ? `${publicBaseUrl}/api/cryptopay/webhook` : '',
+    telegramWebhookUrl: publicBaseUrl ? `${publicBaseUrl}/api/telegram/webhook` : '',
+    telegramWebhookReady: !!(starsSecret && publicBaseUrl),
+    telegramWebhookConfigured: saved.starsWebhookConfigured === true || !!(ENV_TELEGRAM_WEBHOOK_SECRET && ENV_PUBLIC_BASE_URL)
   };
 }
 
 app.post('/api/payments/settings', async (req, res) => {
   try {
-    await getUserFromReq(req);
-    res.json({ ok: true, settings: await getPaymentSettings() });
+    const user = await getUserFromReq(req);
+    const settings = await getPaymentSettings();
+    // Never return provider API tokens or webhook secrets to the browser.
+    res.json({ ok: true, settings, role: user.role });
   } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/payments/crypto/test', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية');
+    const token = String(req.body?.token || '').trim() || await getCryptoPayToken();
+    if (!token) throw new Error('أدخل رمز Crypto Pay API أولًا');
+    const response = await fetch('https://pay.crypt.bot/api/getMe', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Crypto-Pay-API-Token': token }, body: '{}'
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.error?.name || data.description || 'فشل التحقق من رمز Crypto Pay');
+    res.json({ ok: true, appName: data.result?.name || 'Crypto Pay App', appId: data.result?.app_id || '' });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
 app.post('/api/payments/settings/save', async (req, res) => {
@@ -795,39 +1026,71 @@ app.post('/api/payments/settings/save', async (req, res) => {
     const user = await getUserFromReq(req);
     if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية');
     const manualEnabled = req.body?.manualEnabled !== false;
-    const electronicEnabled = req.body?.electronicEnabled === true;
     const manualInstructions = String(req.body?.manualInstructions || '').trim().slice(0, 2000);
-    const electronicCheckoutUrl = String(req.body?.electronicCheckoutUrl || '').trim();
-    if (electronicEnabled) {
-      let parsed;
-      try { parsed = new URL(electronicCheckoutUrl); } catch { throw new Error('أدخل رابط دفع إلكتروني صحيحًا'); }
-      if (parsed.protocol !== 'https:') throw new Error('يجب أن يبدأ رابط الدفع الإلكتروني بـ HTTPS');
+    const manualPaymentUsername = String(req.body?.manualPaymentUsername || '').trim().replace(/^@/, '');
+    const cryptoEnabled = req.body?.cryptoEnabled === true;
+    const cryptoTonEnabled = req.body?.cryptoTonEnabled !== false;
+    const cryptoUsdtEnabled = req.body?.cryptoUsdtEnabled !== false;
+    const cryptoWebhookConfigured = req.body?.cryptoWebhookConfigured === true;
+    const starsEnabled = req.body?.starsEnabled === true;
+    const publicBaseUrl = String(req.body?.publicBaseUrl || '').trim().replace(/\/$/, '');
+    const newCryptoToken = String(req.body?.cryptoPayApiToken || '').trim();
+    if (manualEnabled && !/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(manualPaymentUsername)) throw new Error('أدخل يوزر تيليجرام صحيحًا لحساب استقبال الدفع');
+    if ((cryptoEnabled || starsEnabled) && !/^https:\/\//i.test(publicBaseUrl)) throw new Error('أدخل رابط المتجر العام ويجب أن يبدأ بـ https://');
+    if (newCryptoToken) {
+      const check = await fetch('https://pay.crypt.bot/api/getMe', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Crypto-Pay-API-Token': newCryptoToken }, body: '{}' });
+      const checkData = await check.json().catch(() => ({}));
+      if (!check.ok || !checkData.ok) throw new Error('رمز Crypto Pay غير صحيح أو تعذر التحقق منه');
     }
-    if (!manualEnabled && !electronicEnabled) throw new Error('يجب تفعيل وسيلة دفع واحدة على الأقل');
-    await db.collection('store').updateOne(
-      { _id: 'main' },
-      { $set: { paymentSettings: { manualEnabled, manualInstructions, electronicEnabled, electronicCheckoutUrl } } },
-      { upsert: true }
-    );
-    res.json({ ok: true });
-  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+    const previous = await getPaymentConfigRaw();
+    const baseUrlChanged = !!(previous.publicBaseUrl && previous.publicBaseUrl !== publicBaseUrl);
+    const paymentSettings = {
+      ...previous,
+      manualEnabled, manualInstructions, manualPaymentUsername,
+      cryptoEnabled, cryptoTonEnabled, cryptoUsdtEnabled, cryptoWebhookConfigured, starsEnabled,
+      publicBaseUrl,
+      updatedAt: new Date(), updatedBy: String(user.id)
+    };
+    if (newCryptoToken) paymentSettings.cryptoPayTokenEnc = encryptPaymentSecret(newCryptoToken);
+    if (baseUrlChanged) { paymentSettings.cryptoWebhookConfigured = false; paymentSettings.starsWebhookConfigured = false; }
+    if (starsEnabled && !previous.starsWebhookSecretEnc && !ENV_TELEGRAM_WEBHOOK_SECRET) {
+      paymentSettings.starsWebhookSecretEnc = encryptPaymentSecret(crypto.randomBytes(32).toString('hex'));
+    }
+    await db.collection('store').updateOne({ _id: 'main' }, { $set: { paymentSettings } }, { upsert: true });
+    res.json({ ok: true, settings: await getPaymentSettings() });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
+// Safe Stars webhook setup: it never overwrites a different existing bot webhook.
+app.post('/api/payments/telegram-webhook/setup', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية');
+    const settings = await getPaymentSettings();
+    if (!settings.telegramWebhookReady) throw new Error('احفظ إعدادات Stars ورابط المتجر أولًا');
+    const info = await telegramApi('getWebhookInfo', {});
+    const target = settings.telegramWebhookUrl;
+    if (info?.url && info.url !== target) {
+      return res.status(409).json({ ok: false, conflict: true, existingUrl: info.url, error: 'للبوت Webhook آخر. لم نغيّره حفاظًا على وظائف البوت الحالية.' });
+    }
+    const secret = await getStarsWebhookSecret();
+    await telegramApi('setWebhook', { url: target, secret_token: secret, allowed_updates: ['message', 'pre_checkout_query'] });
+    await db.collection('store').updateOne({ _id: 'main' }, { $set: { 'paymentSettings.starsWebhookConfigured': true, 'paymentSettings.starsWebhookUpdatedAt': new Date() } });
+    res.json({ ok: true, message: 'تم ربط Webhook الخاص بـ Telegram Stars بنجاح.' });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
 app.post('/api/orders/create', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     const currency = cleanOrderCurrency(req.body?.currency);
-    const paymentMethod = String(req.body?.paymentMethod || 'manual');
-    if (!['manual', 'electronic'].includes(paymentMethod)) throw new Error('طريقة الدفع غير صحيحة');
+    const paymentMethod = currency === 'sar' ? 'manual' : (currency === 'stars' ? 'stars' : 'cryptopay');
     const settings = await getPaymentSettings();
-    if (paymentMethod === 'manual' && !settings.manualEnabled) throw new Error('الدفع اليدوي غير متاح حاليًا');
-    if (paymentMethod === 'electronic' && (!settings.electronicEnabled || !settings.electronicCheckoutUrl)) {
-      throw new Error('الدفع الإلكتروني غير مفعّل حاليًا');
-    }
+    if (currency === 'sar' && (!settings.manualEnabled || !settings.manualPaymentUsername)) throw new Error('الدفع اليدوي بالريال غير مهيأ حاليًا');
+    if (['ton', 'usd'].includes(currency) && (!settings.cryptoEnabled || (currency === 'ton' && !settings.cryptoTonEnabled) || (currency === 'usd' && !settings.cryptoUsdtEnabled))) throw new Error('وسيلة الدفع بهذه العملة غير مفعّلة حاليًا من لوحة التحكم.');
+    if (currency === 'stars' && !settings.starsEnabled) throw new Error('الدفع عبر Telegram Stars غير مفعّل حاليًا من لوحة التحكم.');
     const requestedItems = req.body?.items;
-    if (!Array.isArray(requestedItems) || requestedItems.length < 1 || requestedItems.length > 30) {
-      throw new Error('السلة فارغة أو تحتوي عددًا غير مسموح من المنتجات');
-    }
+    if (!Array.isArray(requestedItems) || requestedItems.length < 1 || requestedItems.length > 30) throw new Error('السلة فارغة أو تحتوي عددًا غير مسموح من المنتجات');
     const merged = new Map();
     for (const item of requestedItems) {
       const productId = String(item?.productId || '').trim();
@@ -845,34 +1108,69 @@ app.post('/api/orders/create', async (req, res) => {
       const unitPrice = getDiscountedUnitPrice(product, currency);
       const lineTotal = orderRound(unitPrice * quantity, currency);
       total = orderRound(total + lineTotal, currency);
-      lines.push({
-        productId: String(product.id), name: String(product.name || 'منتج').slice(0, 150),
-        quantity, unitPrice, lineTotal
-      });
+      lines.push({ productId: String(product.id), name: String(product.name || 'منتج').slice(0, 150), quantity, unitPrice, lineTotal });
     }
     if (!(total > 0)) throw new Error('إجمالي الطلب غير صالح');
+    if (currency === 'stars' && (!Number.isInteger(total) || total > 100000)) throw new Error('قيمة Stars غير صحيحة أو تتجاوز الحد المسموح');
 
     const now = new Date();
     const randomPart = crypto.randomBytes(3).toString('hex').toUpperCase();
     const orderCode = `DY-${Date.now().toString(36).toUpperCase()}-${randomPart}`;
     const order = {
       id: crypto.randomUUID(), orderCode,
-      userId: user.id, customerName: String(user.name || 'عميل').slice(0, 100),
-      items: lines, currency, total,
-      paymentMethod,
-      paymentStatus: 'pending',
-      paymentReference: '',
+      userId: String(user.id), customerName: String(user.name || 'عميل').slice(0, 100),
+      items: lines, currency, total, paymentMethod,
+      paymentStatus: 'pending', paymentReference: '',
       status: 'awaiting_payment', statusLabel: ORDER_STATUS_LABELS.awaiting_payment,
       paymentInstructions: paymentMethod === 'manual' ? settings.manualInstructions : '',
-      createdAt: now, updatedAt: now,
-      salesCountedAt: null
+      manualPaymentUsername: paymentMethod === 'manual' ? settings.manualPaymentUsername : '',
+      paymentNotified: false, createdAt: now, updatedAt: now, salesCountedAt: null
     };
     await db.collection('orders').insertOne(order);
+
+    let checkoutUrl = '';
+    try {
+      if (paymentMethod === 'cryptopay') {
+        const invoice = await createCryptoPayInvoice(order);
+        checkoutUrl = invoice.pay_url;
+        await db.collection('orders').updateOne({ id: order.id }, { $set: { providerInvoiceId: String(invoice.invoice_id), providerAsset: invoice.asset, providerPayUrl: invoice.pay_url, providerCreatedAt: new Date() } });
+      } else if (paymentMethod === 'stars') {
+        checkoutUrl = await createStarsInvoice(order);
+        await db.collection('orders').updateOne({ id: order.id }, { $set: { providerPayUrl: checkoutUrl, providerCreatedAt: new Date() } });
+      }
+    } catch (providerError) {
+      await db.collection('orders').deleteOne({ id: order.id });
+      throw providerError;
+    }
+
+    await Promise.allSettled([
+      addNotification(order.userId, 'تم إنشاء طلبك', `تم استلام طلبك ${order.orderCode}. ${paymentMethod === 'manual' ? 'أكمل التحويل اليدوي لتأكيده.' : 'أكمل الدفع لتأكيد الطلب.'}`, 'info', 'orders', { orderId: order.id }),
+      notifyAdmins('طلب جديد', `وصل طلب جديد ${order.orderCode} بقيمة ${moneyForServer(total, currency)}.`, 'info')
+    ]);
     res.json({
       ok: true,
-      order: { id: order.id, orderCode, total, currency, status: order.status, paymentMethod, paymentInstructions: order.paymentInstructions },
-      checkoutUrl: paymentMethod === 'electronic' ? settings.electronicCheckoutUrl : ''
+      order: { id: order.id, orderCode, total, currency, status: order.status, paymentMethod, paymentInstructions: order.paymentInstructions, manualPaymentUsername: order.manualPaymentUsername },
+      checkoutUrl
     });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
+app.post('/api/orders/notify-manual-payment', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    const orderId = String(req.body?.orderId || '').trim();
+    if (!orderId) throw new Error('رقم الطلب غير صالح');
+    const result = await db.collection('orders').updateOne(
+      { id: orderId, userId: user.id, paymentMethod: 'manual', status: 'awaiting_payment', paymentStatus: { $ne: 'paid' } },
+      { $set: { paymentNotified: true, paymentStatus: 'submitted', paymentNotifiedAt: new Date(), updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) throw new Error('الطلب غير موجود أو لا يقبل إشعار الدفع');
+    const order = await db.collection('orders').findOne({ id: orderId });
+    await Promise.allSettled([
+      order ? notifyAdmins('إشعار دفع يدوي', `أرسل العميل إشعارًا بتحويل الطلب ${order.orderCode}. تحقق من وصول المبلغ.`, 'warning') : Promise.resolve(),
+      addNotification(user.id, 'تم استلام إشعار الدفع', 'وصل إشعارك إلى المتجر، والطلب بانتظار تأكيد حساب الاستقبال.', 'info', 'orders', { orderId })
+    ]);
+    res.json({ ok: true, message: 'تم إشعار المتجر بانتظار تأكيد استلام المبلغ' });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
@@ -930,6 +1228,12 @@ app.post('/api/orders/update-status', async (req, res) => {
     if (['processing', 'completed'].includes(status) && order.paymentStatus !== 'paid') {
       throw new Error('يجب تأكيد الدفع أولًا قبل بدء التنفيذ أو إكمال الطلب');
     }
+    if (status === 'paid' && order.paymentMethod === 'manual' && !order.paymentNotified) {
+      throw new Error('لا يمكن تأكيد الدفع قبل أن يرسل العميل إشعار إتمام التحويل');
+    }
+    if (status === 'paid' && ['cryptopay', 'stars'].includes(order.paymentMethod) && order.paymentStatus !== 'paid') {
+      throw new Error('هذا الطلب يستخدم دفعًا تلقائيًا؛ سيتم تأكيده بعد وصول إشعار الدفع الموثوق.');
+    }
     if (status === 'rejected' && order.paymentStatus === 'paid') {
       throw new Error('لا يمكن رفض طلب تم تأكيد دفعه؛ استخدم إجراء استرداد منفصل');
     }
@@ -951,6 +1255,15 @@ app.post('/api/orders/update-status', async (req, res) => {
       if (status === 'rejected') update.paymentStatus = 'rejected';
       await orders.updateOne({ id: orderId }, { $set: update });
     }
+    const updatedOrder = await orders.findOne({ id: orderId });
+    const notificationText = {
+      paid: 'تم تأكيد دفع طلبك، وسيتم تجهيزه قريبًا.',
+      processing: 'بدأ فريق DAYO تنفيذ طلبك.',
+      completed: 'اكتمل طلبك بنجاح. شكرًا لثقتك بـ DAYO.',
+      cancelled: 'تم إلغاء طلبك.',
+      rejected: 'تعذر قبول طلبك. يرجى التواصل مع الدعم.'
+    }[status] || 'تم تحديث حالة طلبك.';
+    await Promise.allSettled([addNotification(order.userId, ORDER_STATUS_LABELS[status], `${notificationText} رقم الطلب ${order.orderCode}.`, status === 'completed' || status === 'paid' ? 'success' : 'info', 'orders', { orderId })]);
     res.json({ ok: true });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
