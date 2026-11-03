@@ -7,7 +7,10 @@
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
   />
   <meta name="theme-color" content="#080e1d" />
-  <meta name="description" content="DAYO STORE — متجر تيليجرام مع دعم TON Connect وTelegram Stars والدفع اليدوي." />
+  <meta
+    name="description"
+    content="DAYO STORE — متجر تيليجرام مع دعم TON Connect وTelegram Stars والدفع اليدوي."
+  />
   <link rel="icon" href="/icon-180.png" />
   <title>DAYO STORE</title>
 
@@ -1061,6 +1064,85 @@
       word-break: break-all;
     }
 
+    /* ===== Admin Dashboard Grid ===== */
+    .admin-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .admin-tile {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px 8px;
+      min-height: 98px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: 0.18s ease;
+      color: var(--text);
+      text-align: center;
+    }
+
+    .admin-tile:hover,
+    .admin-tile:active {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: var(--shadow);
+    }
+
+    .admin-tile-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      background: linear-gradient(
+        135deg,
+        rgba(74, 144, 226, 0.18),
+        rgba(138, 43, 226, 0.18)
+      );
+    }
+
+    .admin-tile-title {
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.35;
+      color: var(--text);
+    }
+
+    .admin-section-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .admin-section-head h3 {
+      margin: 0;
+      flex: 1;
+      font-size: 17px;
+      color: var(--text);
+    }
+
+    .admin-loading {
+      padding: 40px 12px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    @media (min-width: 520px) {
+      .admin-grid {
+        grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+      }
+    }
+
     /* Cart / orders / dynamic pages */
     .dayo-page-head {
       display: flex;
@@ -1500,6 +1582,38 @@
       gap: 10px;
     }
 
+    /* Loader */
+    .custom-loader-wrapper {
+      display: grid;
+      place-items: center;
+      min-height: 50vh;
+    }
+
+    .loader {
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .loader-text {
+      margin-bottom: 10px;
+    }
+
+    .load {
+      display: inline-block;
+      width: 42px;
+      height: 42px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 999px;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     /* Responsive */
     @media (min-width: 520px) {
       .shop-grid,
@@ -1526,7 +1640,10 @@
     </div>
 
     <div class="top-actions">
-      <button id="theme-toggle" class="icon-btn" onclick="toggleTheme()" aria-label="تبديل المظهر">☀️</button>
+      <button id="theme-toggle" class="icon-btn" onclick="toggleTheme()" aria-label="تبديل المظهر">
+        ☀️
+      </button>
+
       <button class="icon-btn" onclick="openNotifications()" aria-label="الإشعارات">
         🔔
         <span id="dayo-notification-count" class="hidden">0</span>
@@ -1629,14 +1746,16 @@
     <div class="page-head">
       <button class="back-btn" onclick="goHome()">‹</button>
       <h2>تفاصيل المنتج</h2>
-      <button class="icon-btn" onclick="copyCurrentProductLink()" aria-label="نسخ رابط المنتج">🔗</button>
+      <button class="icon-btn" onclick="copyCurrentProductLink()" aria-label="نسخ رابط المنتج">
+        🔗
+      </button>
     </div>
 
     <div id="product-content"></div>
   </section>
 
   <!-- Dynamic page used by cart/orders -->
-  <div id="page-dayo-dynamic" class="page"></div>
+  <section id="page-dayo-dynamic" class="page dayo-dynamic-page"></section>
 
   <!-- Admin page -->
   <section id="page-admin" class="page">
@@ -1693,8 +1812,20 @@
   </aside>
 
   <!-- Hidden upload inputs used by owner store settings -->
-  <input type="file" id="cover-upload" accept="image/*" class="hidden-file" onchange="handleCoverUpload(this)" />
-  <input type="file" id="logo-upload" accept="image/*" class="hidden-file" onchange="handleLogoUpload(this)" />
+  <input
+    type="file"
+    id="cover-upload"
+    accept="image/*"
+    class="hidden-file"
+    onchange="handleCoverUpload(this)"
+  />
+  <input
+    type="file"
+    id="logo-upload"
+    accept="image/*"
+    class="hidden-file"
+    onchange="handleLogoUpload(this)"
+  />
 
   <!-- Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -1705,7 +1836,7 @@
   <!-- TON Connect UI -->
   <script src="https://unpkg.com/@tonconnect/ui@latest/dist/tonconnect-ui.min.js"></script>
   <script>
-    // Compatibility shim: some builds expose window.tonconnect instead of window.TON_CONNECT_UI.
+    // Compatibility shim: some builds may expose different globals.
     window.TON_CONNECT_UI = window.TON_CONNECT_UI || window.tonconnect || {};
   </script>
 
