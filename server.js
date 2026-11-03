@@ -1,84 +1,64 @@
 const express = require('express');
+const path = require('path');
 const crypto = require('crypto');
 const { MongoClient, ServerApiVersion } = require('mongodb');
 const { Address, beginCell } = require('@ton/core');
 const { TonClient } = require('@ton/ton');
 
 const app = express();
-
-app.use(express.json({
-  limit: '10mb',
-  verify: (req, res, buffer) => { req.rawBody = buffer.toString('utf8'); }
-}));
-
-// TON Connect manifest ديناميكي حسب الدومين الحالي
-app.get('/tonconnect-manifest.json', (req, res) => {
-  const protocol = req.get('x-forwarded-proto') || req.protocol || 'https';
-  const host = req.get('x-forwarded-host') || req.get('host');
-  const origin = `${protocol}://${host}`;
-  res.json({
-    url: origin,
-    name: 'DAYO STORE',
-    iconUrl: `${origin}/icon-180.png`
-  });
-});
-
+app.use(express.json({ limit: '10mb', verify: (req, res, buffer) => { req.rawBody = buffer.toString('utf8'); } }));
 app.use(express.static('public'));
 
-// حد بسيط للطلبات لمنع الإغراق
+// حد بسيط للطلبات لمنع الإغراق. في بيئة متعددة الخوادم استخدم Redis أو rate-limit package.
 const requestBuckets = new Map();
 app.use('/api', (req, res, next) => {
   const key = req.ip || req.socket.remoteAddress || 'unknown';
   const now = Date.now();
-  const bucket = requestBuckets.get(key) || { count: 0, resetAt: now + 60000 };
-  if (now > bucket.resetAt) { bucket.count = 0; bucket.resetAt = now + 60000; }
+  const bucket = requestBuckets.get(key) || { count: 0, resetAt: now + 60_000 };
+  if (now > bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = now + 60_000;
+  }
   bucket.count += 1;
   requestBuckets.set(key, bucket);
   if (bucket.count > 180) return res.status(429).json({ ok: false, error: 'طلبات كثيرة، حاول بعد دقيقة' });
   next();
 });
 
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, bucket] of requestBuckets.entries()) {
-    if (now > bucket.resetAt) requestBuckets.delete(key);
-  }
-}, 300000).unref();
-
+// لا تضع أسرار البوت أو قاعدة البيانات داخل الكود.
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGODB_URI = process.env.MONGODB_URI;
-const OWNER_TELEGRAM_ID = process.env.OWNER_TELEGRAM_ID;
-
+const OWNER_TELEGRAM_ID = process.env.OWNER_TELEGRAM_ID || '51442749';
 const ENV_TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
-const ENV_PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
-const ENV_TONCENTER_API_KEY = String(process.env.TONCENTER_API_KEY || '').trim();
-const ENV_TON_USDT_MASTER_ADDRESS = String(process.env.TON_USDT_MASTER_ADDRESS || 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs').trim();
-
+const ENV_PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
+const TONCENTER_API_KEY = String(process.env.TONCENTER_API_KEY || '').trim();
+const TON_USDT_MASTER_ADDRESS = String(process.env.TON_USDT_MASTER_ADDRESS || 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs').trim();
 const TON_NETWORK = '-239';
 
 if (!BOT_TOKEN) throw new Error('يرجى ضبط BOT_TOKEN في متغيرات البيئة');
 if (!MONGODB_URI) throw new Error('يرجى ضبط MONGODB_URI في متغيرات البيئة');
-if (!OWNER_TELEGRAM_ID) throw new Error('يرجى ضبط OWNER_TELEGRAM_ID في متغيرات البيئة');
 
 const client = new MongoClient(MONGODB_URI, {
-  serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true }
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  }
 });
 
 let db;
 
-/* ===== تشفير أسرار الدفع ===== */
-
+// Payment provider credentials entered from the dashboard are encrypted at rest.
+// The encryption key is derived from the server-side BOT_TOKEN and never sent to clients.
 function paymentEncryptionKey() {
   return crypto.createHash('sha256').update(`${BOT_TOKEN}:DAYO_PAYMENT_SETTINGS_V1`).digest();
 }
-
 function encryptPaymentSecret(value) {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', paymentEncryptionKey(), iv);
   const encrypted = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
   return `${iv.toString('hex')}.${cipher.getAuthTag().toString('hex')}.${encrypted.toString('hex')}`;
 }
-
 function decryptPaymentSecret(value) {
   if (!value || typeof value !== 'string') return '';
   try {
@@ -88,89 +68,53 @@ function decryptPaymentSecret(value) {
     return Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]).toString('utf8');
   } catch (_) { return ''; }
 }
-
 async function getPaymentConfigRaw() {
   const store = await db.collection('store').findOne({ _id: 'main' });
   return store?.paymentSettings || {};
 }
-
 async function getStarsWebhookSecret() {
   const saved = await getPaymentConfigRaw();
   return decryptPaymentSecret(saved.starsWebhookSecretEnc) || ENV_TELEGRAM_WEBHOOK_SECRET;
 }
-
+async function getTonReceiverAddress() {
+  const saved = await getPaymentConfigRaw();
+  const address = String(saved.tonReceiverAddress || '').trim();
+  if (!address) throw new Error('أدخل عنوان محفظة الاستقبال من لوحة تحكم DAYO أولًا');
+  try { return Address.parse(address); }
+  catch (_) { throw new Error('عنوان محفظة الاستقبال المحفوظ في لوحة التحكم غير صالح'); }
+}
 async function getPublicBaseUrl() {
   const saved = await getPaymentConfigRaw();
-  return String(saved.publicBaseUrl || ENV_PUBLIC_BASE_URL || '').replace(/\/+$/, '');
+  return String(saved.publicBaseUrl || ENV_PUBLIC_BASE_URL || '').replace(/\/$/, '');
 }
 
-/* ===== أدوات TON ===== */
 
-function parseMainnetTonAddress(value) {
-  const address = Address.parse(String(value || '').trim());
-  if (address.workChain !== -239) throw new Error('عنوان TON يجب أن يكون على الشبكة الرئيسية Mainnet');
-  return address;
+function getTonClient() {
+  if (!TONCENTER_API_KEY) throw new Error('أضف TONCENTER_API_KEY في إعدادات Render لتفعيل التحقق من معاملات TON');
+  return new TonClient({ endpoint: 'https://toncenter.com/api/v2/jsonRPC', apiKey: TONCENTER_API_KEY });
 }
-
-function isValidTonAddress(value) {
-  try { parseMainnetTonAddress(value); return true; } catch (_) { return false; }
-}
-
-function normalizeTonAddress(value) {
-  return parseMainnetTonAddress(value).toRawString().toLowerCase();
-}
-
-async function getTonCenterApiKey() {
-  const saved = await getPaymentConfigRaw();
-  return decryptPaymentSecret(saved.tonCenterApiKeyEnc) || ENV_TONCENTER_API_KEY;
-}
-
-async function getTonUsdtMasterAddress() {
-  const saved = await getPaymentConfigRaw();
-  const value = String(saved.tonUsdtMasterAddress || ENV_TON_USDT_MASTER_ADDRESS || '').trim();
-  if (!value) throw new Error('لم يتم ضبط عنوان عقد USDT على شبكة TON');
-  parseMainnetTonAddress(value);
-  return value;
-}
-
-async function getTonReceiverAddress(currency = 'ton') {
-  const saved = await getPaymentConfigRaw();
-  const tonAddress = String(saved.tonReceiverAddress || '').trim();
-  const usdtAddress = String(saved.tonUsdtReceiverAddress || '').trim();
-  const address = currency === 'usd' ? (usdtAddress || tonAddress) : tonAddress;
-  if (!address) throw new Error('أدخل عنوان محفظة الاستقبال من لوحة تحكم DAYO أولًا');
-  return parseMainnetTonAddress(address);
-}
-
-async function getTonClient() {
-  const apiKey = await getTonCenterApiKey();
-  if (!apiKey) throw new Error('أضف مفتاح TON Center API من لوحة تحكم DAYO أو من متغيرات البيئة');
-  return new TonClient({ endpoint: 'https://toncenter.com/api/v2/jsonRPC', apiKey });
-}
-
 function decimalToUnits(value, decimals) {
   const text = String(value);
   if (!/^\d+(?:\.\d+)?$/.test(text)) throw new Error('قيمة الدفع غير صالحة');
   const [whole, fraction = ''] = text.split('.');
   if (fraction.length > decimals) throw new Error('عدد المنازل العشرية يتجاوز دقة العملة');
-  const padded = (fraction + '0'.repeat(decimals)).slice(0, decimals);
-  return (BigInt(whole) * (10n ** BigInt(decimals)) + BigInt(padded || '0')).toString();
+  return (BigInt(whole) * (10n ** BigInt(decimals)) + BigInt((fraction + '0'.repeat(decimals)).slice(0, decimals) || '0')).toString();
 }
-
+function normalizeTonAddress(value) {
+  try { return Address.parse(String(value)).toRawString().toLowerCase(); }
+  catch (_) { throw new Error('عنوان محفظة TON غير صالح'); }
+}
 function createOrderComment(orderCode) {
   return beginCell().storeUint(0, 32).storeStringTail(String(orderCode)).endCell();
 }
-
-async function getJettonWalletAddress(ownerAddress, masterAddress) {
-  const tonClient = await getTonClient();
+async function getJettonWalletAddress(ownerAddress) {
+  const client = getTonClient();
   const owner = Address.parse(ownerAddress);
-  const master = Address.parse(masterAddress);
-  const result = await tonClient.runMethod(master, 'get_wallet_address', [
+  const result = await client.runMethod(Address.parse(TON_USDT_MASTER_ADDRESS), 'get_wallet_address', [
     { type: 'slice', cell: beginCell().storeAddress(owner).endCell() }
   ]);
   return result.stack.readAddress();
 }
-
 function cellComment(cell) {
   try {
     const slice = cell.beginParse();
@@ -178,11 +122,9 @@ function cellComment(cell) {
     return slice.loadStringTail();
   } catch (_) { return ''; }
 }
-
 function txHashHex(tx) {
   try { return tx.hash().toString('hex'); } catch (_) { return String(tx.lt || ''); }
 }
-
 function transactionIsSuccessful(tx) {
   if (!tx || !tx.inMessage) return false;
   const desc = tx.description || {};
@@ -190,25 +132,20 @@ function transactionIsSuccessful(tx) {
   if (desc.computePhase?.success === false || desc.actionPhase?.success === false) return false;
   return true;
 }
-
 async function verifyTonConnectOrder(order) {
-  const tonClient = await getTonClient();
-  const receiver = await getTonReceiverAddress(order.currency);
-  const receiverRaw = receiver.toRawString().toLowerCase();
+  const client = getTonClient();
+  const receiver = await getTonReceiverAddress();
   const expectedSender = normalizeTonAddress(order.tonSenderAddress || '');
   const since = Math.floor(new Date(order.createdAt).getTime() / 1000) - 120;
-  const transactions = await tonClient.getTransactions(receiver, { limit: 100 });
+  const transactions = await client.getTransactions(receiver, { limit: 100 });
 
   if (order.currency === 'ton') {
     const expectedAmount = BigInt(decimalToUnits(order.total, 9));
     for (const tx of transactions) {
       if (!transactionIsSuccessful(tx) || !tx.inMessage) continue;
       const info = tx.inMessage.info;
-      if (info.type !== 'internal' || info.bounced === true) continue;
-      if (info.dest.toRawString().toLowerCase() !== receiverRaw) continue;
-      let srcRaw = '';
-      try { srcRaw = normalizeTonAddress(info.src.toRawString()); } catch (_) { continue; }
-      if (srcRaw !== expectedSender) continue;
+      if (info.type !== 'internal' || info.bounced === true || info.dest.toRawString().toLowerCase() !== receiver.toRawString().toLowerCase()) continue;
+      if (normalizeTonAddress(info.src.toRawString()) !== expectedSender) continue;
       if (BigInt(info.value.coins) !== expectedAmount) continue;
       if (Number(tx.now || 0) < since) continue;
       if (cellComment(tx.inMessage.body) !== order.orderCode) continue;
@@ -218,50 +155,47 @@ async function verifyTonConnectOrder(order) {
   }
 
   if (order.currency === 'usd') {
-    const masterAddress = await getTonUsdtMasterAddress();
-    const recipientJettonWallet = await getJettonWalletAddress(
-      receiver.toString({ urlSafe: true, bounceable: true }), masterAddress
-    );
-    const recipientJettonWalletRaw = recipientJettonWallet.toRawString().toLowerCase();
+    const recipientJettonWallet = await getJettonWalletAddress(receiver.toString({ urlSafe: true, bounceable: true }));
     const expectedAmount = BigInt(decimalToUnits(order.total, 6));
     for (const tx of transactions) {
       if (!transactionIsSuccessful(tx) || !tx.inMessage) continue;
       const info = tx.inMessage.info;
-      if (info.type !== 'internal' || info.bounced === true) continue;
-      if (info.dest.toRawString().toLowerCase() !== receiverRaw) continue;
-      if (info.src.toRawString().toLowerCase() !== recipientJettonWalletRaw) continue;
+      if (info.type !== 'internal' || info.bounced === true || info.dest.toRawString().toLowerCase() !== receiver.toRawString().toLowerCase()) continue;
+      if (info.src.toRawString().toLowerCase() !== recipientJettonWallet.toRawString().toLowerCase()) continue;
       if (Number(tx.now || 0) < since) continue;
-      let amount = 0n, from = null, forwardCell = null;
-      try {
-        const slice = tx.inMessage.body.beginParse();
-        if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x7362d09c) continue;
-        slice.loadUintBig(64);
-        amount = slice.loadCoins();
-        from = slice.loadAddress();
-        if (!from) continue;
-        slice.loadCoins();
-        const hasResponse = slice.loadBit();
-        if (hasResponse) forwardCell = slice.loadRef();
-      } catch (_) { continue; }
-      let fromRaw = '';
-      try { fromRaw = normalizeTonAddress(from.toRawString()); } catch (_) { continue; }
-      if (fromRaw !== expectedSender) continue;
+      const slice = tx.inMessage.body.beginParse();
+      if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x7362d09c) continue; // transfer_notification
+      slice.loadUintBig(64); // query_id
+      const amount = slice.loadCoins();
+      const sender = slice.loadAddress();
+      const hasRef = slice.loadBit();
+      const forwardPayload = hasRef ? slice.loadRef() : slice.asCell();
+      if (sender.toRawString().toLowerCase() !== expectedSender) continue;
       if (BigInt(amount) !== expectedAmount) continue;
-      if (!forwardCell || cellComment(forwardCell) !== order.orderCode) continue;
+      if (cellComment(forwardPayload) !== order.orderCode) continue;
+      if (tx.outMessages && tx.outMessages.size > 0) continue;
       return { paid: true, reference: txHashHex(tx) };
     }
     return { paid: false };
   }
-
   throw new Error('عملة TON Connect غير مدعومة لهذا الطلب');
 }
-
-/* ===== تهيئة قاعدة البيانات ===== */
 
 async function connectDB() {
   try {
     await client.connect();
     db = client.db('dayoStore');
+    // Remove obsolete Crypto Pay credentials and flags from active store settings.
+    await db.collection('store').updateOne(
+      { _id: 'main' },
+      { $unset: {
+        'paymentSettings.cryptoEnabled': '',
+        'paymentSettings.cryptoTonEnabled': '',
+        'paymentSettings.cryptoUsdtEnabled': '',
+        'paymentSettings.cryptoWebhookConfigured': '',
+        'paymentSettings.cryptoPayTokenEnc': ''
+      } }
+    );
     await db.collection('orders').createIndex({ id: 1 }, { unique: true });
     await db.collection('orders').createIndex({ userId: 1, createdAt: -1 });
     await db.collection('orders').createIndex({ status: 1, createdAt: -1 });
@@ -279,24 +213,24 @@ async function connectDB() {
       await storeCollection.insertOne({
         _id: 'main',
         name: 'DAYO STORE',
-        cover: '', logo: '', usersCount: 0, onlineCount: 0, menuLinks: {},
+        cover: '',
+        logo: '',
+        usersCount: 0,
+        onlineCount: 0,
+        menuLinks: {},
         heroButton: { text: 'تسوق الآن', link: '#shop', color: '#4A90E2' },
-        paymentSettings: {
-          manualEnabled: true, manualInstructions: '', manualPaymentUsername: '',
-          tonConnectEnabled: false, tonConnectTonEnabled: true, tonConnectUsdtEnabled: true,
-          tonReceiverAddress: '', tonUsdtReceiverAddress: '',
-          tonUsdtMasterAddress: ENV_TON_USDT_MASTER_ADDRESS,
-          starsEnabled: true, publicBaseUrl: ENV_PUBLIC_BASE_URL
-        }
+        paymentSettings: { manualEnabled: true, manualInstructions: '', manualPaymentUsername: '' }
       });
     }
 
     if (!await db.collection('slider').findOne({ _id: 'main' })) {
       await db.collection('slider').insertOne({ _id: 'main', slides: [] });
     }
+
     if (!await db.collection('sections').findOne({ _id: 'main' })) {
       await db.collection('sections').insertOne({ _id: 'main', list: [] });
     }
+
     if (!await db.collection('categories').findOne({ _id: 'main' })) {
       await db.collection('categories').insertOne({
         _id: 'main',
@@ -308,6 +242,7 @@ async function connectDB() {
         ]
       });
     }
+
     if (!await db.collection('badges').findOne({ _id: 'main' })) {
       await db.collection('badges').insertOne({
         _id: 'main',
@@ -317,6 +252,8 @@ async function connectDB() {
         ]
       });
     }
+
+    // ✅ الأيقونات المربعة
     if (!await db.collection('quickIcons').findOne({ _id: 'main' })) {
       await db.collection('quickIcons').insertOne({
         _id: 'main',
@@ -328,86 +265,139 @@ async function connectDB() {
         ]
       });
     }
+
   } catch (err) {
     console.error('❌ فشل تهيئة قاعدة البيانات:', err);
     throw err;
   }
 }
 
-/* ===== دوال المستخدم والصلاحيات ===== */
-
+/* =========================================================
+   دوال مساعدة
+   ========================================================= */
 function verifyTelegramData(initData, botToken) {
-  if (typeof initData !== 'string' || !initData.trim()) throw new Error('بيانات تيليجرام مفقودة');
+  if (typeof initData !== 'string' || !initData.trim()) {
+    throw new Error('بيانات تيليجرام مفقودة');
+  }
+
   const urlParams = new URLSearchParams(initData);
   const hash = urlParams.get('hash');
   const authDate = Number(urlParams.get('auth_date'));
   const userJson = urlParams.get('user');
-  if (!hash || !/^[a-f0-9]{64}$/i.test(hash)) throw new Error('توقيع تيليجرام مفقود أو غير صالح');
-  if (!Number.isFinite(authDate) || !userJson) throw new Error('بيانات جلسة تيليجرام غير مكتملة');
+
+  if (!hash || !/^[a-f0-9]{64}$/i.test(hash)) {
+    throw new Error('توقيع تيليجرام مفقود أو غير صالح');
+  }
+  if (!Number.isFinite(authDate) || !userJson) {
+    throw new Error('بيانات جلسة تيليجرام غير مكتملة');
+  }
+
+  // رفض بيانات تسجيل الدخول الأقدم من 24 ساعة أو المؤرخة في المستقبل.
   const nowSeconds = Math.floor(Date.now() / 1000);
-  if (authDate > nowSeconds + 30 || nowSeconds - authDate > 86400) throw new Error('انتهت صلاحية جلسة تيليجرام، أعد فتح المتجر');
+  if (authDate > nowSeconds + 30 || nowSeconds - authDate > 86400) {
+    throw new Error('انتهت صلاحية جلسة تيليجرام، أعد فتح المتجر');
+  }
+
   urlParams.delete('hash');
   const dataCheckString = Array.from(urlParams.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => `${key}=${value}`).join('\n');
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+
   const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
   const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest();
   const receivedHash = Buffer.from(hash, 'hex');
-  if (receivedHash.length !== calculatedHash.length || !crypto.timingSafeEqual(calculatedHash, receivedHash)) {
+
+  if (receivedHash.length !== calculatedHash.length ||
+      !crypto.timingSafeEqual(calculatedHash, receivedHash)) {
     throw new Error('توقيع تيليجرام غير صالح');
   }
+
   let user;
-  try { user = JSON.parse(userJson); } catch (_) { throw new Error('بيانات مستخدم تيليجرام غير صالحة'); }
+  try {
+    user = JSON.parse(userJson);
+  } catch {
+    throw new Error('بيانات مستخدم تيليجرام غير صالحة');
+  }
   if (!user || !user.id) throw new Error('معرف مستخدم تيليجرام مفقود');
+
   return { user };
 }
 
 async function getUserFromReq(req) {
   const initData = req.body?.initData;
   if (!initData) throw new Error('بيانات تسجيل الدخول مفقودة');
+
   const parsed = verifyTelegramData(initData, BOT_TOKEN);
   const userId = String(parsed.user.id);
   const now = new Date();
   const displayName = String(parsed.user.first_name || 'مستخدم').slice(0, 100);
+
+  // upsert ذري لتفادي تعارض أول تسجيل دخول متزامن.
   await db.collection('users').updateOne(
     { _id: userId },
-    { $set: { lastSeen: now, name: displayName }, $setOnInsert: { role: 'user', joinedAt: now } },
+    {
+      $set: { lastSeen: now, name: displayName },
+      $setOnInsert: { role: 'user', joinedAt: now }
+    },
     { upsert: true }
   );
-  let dbUser = await db.collection('users').findOne({ _id: userId });
-  if (userId === OWNER_TELEGRAM_ID && dbUser?.role !== 'owner') {
-    await db.collection('users').updateOne({ _id: userId }, { $set: { role: 'owner' } });
-    dbUser = await db.collection('users').findOne({ _id: userId });
-  }
-  return { id: userId, role: dbUser?.role || 'user', name: dbUser?.name || displayName };
+
+  const dbUser = await db.collection('users').findOne({ _id: userId });
+  return {
+    id: userId,
+    role: dbUser?.role || 'user',
+    name: dbUser?.name || displayName
+  };
 }
 
-function isValidRole(role) { return ['user', 'moderator', 'admin'].includes(role); }
+function isValidRole(role) {
+  return ['user', 'moderator', 'admin'].includes(role);
+}
 
 function validatePrices(prices) {
-  if (!prices || typeof prices !== 'object' || Array.isArray(prices)) throw new Error('بيانات الأسعار غير صحيحة');
+  if (!prices || typeof prices !== 'object' || Array.isArray(prices)) {
+    throw new Error('بيانات الأسعار غير صحيحة');
+  }
   const allowed = ['usd', 'ton', 'stars', 'sar'];
   const clean = {};
   for (const key of allowed) {
     const value = prices[key] === undefined ? 0 : Number(prices[key]);
-    if (!Number.isFinite(value) || value < 0 || value > 100000000) throw new Error(`قيمة السعر ${key} غير صحيحة`);
+    if (!Number.isFinite(value) || value < 0 || value > 100000000) {
+      throw new Error(`قيمة السعر ${key} غير صحيحة`);
+    }
     clean[key] = value;
   }
   return clean;
 }
 
-async function getSectionsList() { const doc = await db.collection('sections').findOne({ _id: 'main' }); return doc?.list || []; }
-async function saveSectionsList(list) { await db.collection('sections').updateOne({ _id: 'main' }, { $set: { list } }, { upsert: true }); }
-async function getQuickIconsList() { const doc = await db.collection('quickIcons').findOne({ _id: 'main' }); return doc?.list || []; }
-async function saveQuickIconsList(list) { await db.collection('quickIcons').updateOne({ _id: 'main' }, { $set: { list } }, { upsert: true }); }
+async function getSectionsList() {
+  const doc = await db.collection('sections').findOne({ _id: 'main' });
+  return doc?.list || [];
+}
+async function saveSectionsList(list) {
+  await db.collection('sections').updateOne({ _id: 'main' }, { $set: { list } }, { upsert: true });
+}
+async function getQuickIconsList() {
+  const doc = await db.collection('quickIcons').findOne({ _id: 'main' });
+  return doc?.list || [];
+}
+async function saveQuickIconsList(list) {
+  await db.collection('quickIcons').updateOne({ _id: 'main' }, { $set: { list } }, { upsert: true });
+}
 
-/* ===== المسارات العامة ===== */
+/* =========================================================
+   المسارات (API)
+   ========================================================= */
 
 app.post('/api/me', async (req, res) => {
-  try { const user = await getUserFromReq(req); res.json({ ok: true, user }); }
-  catch (_) { res.status(401).json({ ok: false }); }
+  try {
+    const user = await getUserFromReq(req);
+    res.json({ ok: true, user });
+  } catch (err) { res.status(401).json({ ok: false }); }
 });
 
+// ✅ إحصائيات حقيقية
 app.post('/api/stats', async (req, res) => {
   try {
     await getUserFromReq(req);
@@ -422,8 +412,11 @@ app.post('/api/stats', async (req, res) => {
 });
 
 app.post('/api/products', async (req, res) => {
-  try { await getUserFromReq(req); const products = await db.collection('products').find().toArray(); res.json({ ok: true, products }); }
-  catch (_) { res.status(401).json({ ok: false }); }
+  try {
+    await getUserFromReq(req);
+    const products = await db.collection('products').find().toArray();
+    res.json({ ok: true, products });
+  } catch (err) { res.status(401).json({ ok: false }); }
 });
 
 app.post('/api/products/get', async (req, res) => {
@@ -441,28 +434,40 @@ app.post('/api/products/add', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role === 'user') throw new Error('ليس لديك صلاحية');
+
     const { name, description, image, prices, category, badge, discount } = req.body;
     const productType = req.body?.productType === 'physical' ? 'physical' : 'digital';
     const requestedMethods = Array.isArray(req.body?.paymentMethods) ? req.body.paymentMethods : ['stars'];
     const allowedMethodSet = new Set(['stars', 'ton', 'usd', 'sar']);
-    const paymentMethods = productType === 'digital'
-      ? ['stars']
-      : [...new Set(requestedMethods.map(v => String(v).toLowerCase()).filter(v => allowedMethodSet.has(v)))];
+    const paymentMethods = productType === 'digital' ? ['stars'] : [...new Set(requestedMethods.map(v => String(v).toLowerCase()).filter(v => allowedMethodSet.has(v)))];
     if (!paymentMethods.length) throw new Error('اختر طريقة دفع واحدة على الأقل للمنتج المادي');
-    if (typeof name !== 'string' || !name.trim() || name.trim().length > 150) throw new Error('اسم المنتج مطلوب وبحد أقصى 150 حرفًا');
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 150) {
+      throw new Error('اسم المنتج مطلوب وبحد أقصى 150 حرفًا');
+    }
     const cleanPrices = validatePrices(prices || {});
     const cleanDiscount = Number(discount || 0);
-    if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) throw new Error('نسبة الخصم يجب أن تكون بين 0 و100');
+    if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) {
+      throw new Error('نسبة الخصم يجب أن تكون بين 0 و100');
+    }
     const id = Date.now().toString();
     const slug = 'product-' + id;
+
     const newProduct = {
-      id, slug, link: '#' + slug, name: name.trim(),
+      id, slug, link: '#' + slug,
+      name: name.trim(),
       description: typeof description === 'string' ? description.slice(0, 5000) : 'لا يوجد وصف',
       image: typeof image === 'string' ? image : '',
-      prices: cleanPrices, productType, paymentMethods,
-      category: category || 'all', badge: badge || '', discount: cleanDiscount,
-      soldCount: 0, creatorId: user.id, creatorName: user.name, createdAt: new Date().toISOString()
+      prices: cleanPrices,
+      productType, paymentMethods,
+      category: category || 'all',
+      badge: badge || '',
+      discount: cleanDiscount,
+      soldCount: 0,
+      creatorId: user.id,
+      creatorName: user.name,
+      createdAt: new Date().toISOString()
     };
+
     await db.collection('products').insertOne(newProduct);
     res.json({ ok: true, product: newProduct, link: newProduct.link });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
@@ -472,8 +477,10 @@ app.post('/api/products/edit', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     const { productId, name, description, image, prices, category, badge, discount } = req.body;
+
     const product = await db.collection('products').findOne({ id: productId });
     if (!product) throw new Error('المنتج غير موجود');
+
     if (user.role === 'owner' || user.role === 'admin' || (user.role === 'moderator' && product.creatorId === user.id)) {
       const updateData = {};
       if (name !== undefined) {
@@ -493,9 +500,7 @@ app.post('/api/products/edit', async (req, res) => {
         const productType = req.body?.productType === 'physical' ? 'physical' : 'digital';
         const requestedMethods = Array.isArray(req.body?.paymentMethods) ? req.body.paymentMethods : (product.paymentMethods || ['stars']);
         const allowedMethodSet = new Set(['stars', 'ton', 'usd', 'sar']);
-        const paymentMethods = productType === 'digital'
-          ? ['stars']
-          : [...new Set(requestedMethods.map(v => String(v).toLowerCase()).filter(v => allowedMethodSet.has(v)))];
+        const paymentMethods = productType === 'digital' ? ['stars'] : [...new Set(requestedMethods.map(v => String(v).toLowerCase()).filter(v => allowedMethodSet.has(v)))];
         if (!paymentMethods.length) throw new Error('اختر طريقة دفع واحدة على الأقل للمنتج المادي');
         updateData.productType = productType;
         updateData.paymentMethods = paymentMethods;
@@ -507,6 +512,7 @@ app.post('/api/products/edit', async (req, res) => {
         if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) throw new Error('نسبة الخصم يجب أن تكون بين 0 و100');
         updateData.discount = cleanDiscount;
       }
+
       await db.collection('products').updateOne({ id: productId }, { $set: updateData });
       res.json({ ok: true });
     } else {
@@ -519,8 +525,10 @@ app.post('/api/products/delete', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     const { productId } = req.body;
+
     const product = await db.collection('products').findOne({ id: productId });
     if (!product) throw new Error('المنتج غير موجود');
+
     if (user.role === 'owner' || user.role === 'admin' || (user.role === 'moderator' && product.creatorId === user.id)) {
       await db.collection('products').deleteOne({ id: productId });
       res.json({ ok: true });
@@ -536,7 +544,10 @@ app.post('/api/products/increment-sold', async (req, res) => {
     if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية لتعديل عدد المبيعات');
     const { productId } = req.body;
     if (!productId) throw new Error('معرف المنتج مطلوب');
-    const result = await db.collection('products').updateOne({ id: String(productId) }, { $inc: { soldCount: 1 } });
+    const result = await db.collection('products').updateOne(
+      { id: String(productId) },
+      { $inc: { soldCount: 1 } }
+    );
     if (!result.matchedCount) throw new Error('المنتج غير موجود');
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
@@ -547,8 +558,10 @@ app.post('/api/users/promote', async (req, res) => {
     const user = await getUserFromReq(req);
     const targetId = String(req.body?.targetId || '');
     const newRole = req.body?.newRole;
+
     if (!targetId || !isValidRole(newRole)) throw new Error('بيانات الصلاحية غير صحيحة');
     if (targetId === user.id) throw new Error('لا يمكنك تغيير صلاحية حسابك من هنا');
+
     if (user.role === 'owner') {
       const target = await db.collection('users').findOne({ _id: targetId });
       if (!target) throw new Error('المستخدم غير موجود');
@@ -557,22 +570,27 @@ app.post('/api/users/promote', async (req, res) => {
     } else if (user.role === 'admin' && newRole === 'moderator') {
       const target = await db.collection('users').findOne({ _id: targetId });
       if (!target || !['user', 'moderator'].includes(target.role)) throw new Error('لا يمكن تعديل صلاحية هذا المستخدم');
-      await db.collection('users').updateOne({ _id: targetId }, { $set: { role: newRole } });
+      await db.collection('users').updateOne({ _id: targetId }, { $set: { role: 'moderator' } });
     } else {
       throw new Error('ليس لديك صلاحية');
     }
     res.json({ ok: true });
-  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+  } catch (err) {
+    res.status(403).json({ ok: false, error: err.message });
+  }
 });
 
 app.post('/api/users/list', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
+
     const staffList = await db.collection('users').find({ role: { $in: ['admin', 'moderator'] } }).toArray();
     const formattedStaff = staffList.map(u => ({ id: u._id, role: u.role, name: u.name || 'مستخدم' }));
     res.json({ ok: true, staff: formattedStaff });
-  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+  } catch (err) {
+    res.status(403).json({ ok: false, error: err.message });
+  }
 });
 
 app.post('/api/users/update-role', async (req, res) => {
@@ -580,35 +598,50 @@ app.post('/api/users/update-role', async (req, res) => {
     const requester = await getUserFromReq(req);
     const targetId = String(req.body?.targetId || '');
     const newRole = req.body?.newRole;
+
     if (!['owner', 'admin'].includes(requester.role)) throw new Error('ليس لديك صلاحية');
-    if (!targetId || !['user', 'moderator', 'admin'].includes(newRole)) throw new Error('الصلاحية المطلوبة غير صحيحة');
+    if (!targetId || !['user', 'moderator', 'admin'].includes(newRole)) {
+      throw new Error('الصلاحية المطلوبة غير صحيحة');
+    }
     if (targetId === requester.id) throw new Error('لا يمكنك تغيير صلاحية حسابك');
+
     const targetUser = await db.collection('users').findOne({ _id: targetId });
     if (!targetUser) throw new Error('المستخدم غير موجود');
+
     if (targetUser.role === 'owner') throw new Error('لا يمكن تغيير صلاحية المالك');
     if (requester.role === 'admin') {
-      if (targetUser.role === 'admin' || newRole === 'admin') throw new Error('ليس لديك صلاحية لتعديل صلاحية مدير');
+      if (targetUser.role === 'admin' || newRole === 'admin') {
+        throw new Error('ليس لديك صلاحية لتعديل صلاحية مدير');
+      }
       if (!['user', 'moderator'].includes(newRole)) throw new Error('ليس لديك صلاحية لهذه الرتبة');
     }
+
     await db.collection('users').updateOne({ _id: targetId }, { $set: { role: newRole } });
     res.json({ ok: true });
-  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
+  } catch (err) {
+    res.status(403).json({ ok: false, error: err.message });
+  }
 });
 
 app.post('/api/store', async (req, res) => {
-  try { await getUserFromReq(req); const store = await db.collection('store').findOne({ _id: 'main' }); res.json({ ok: true, store }); }
-  catch (_) { res.status(401).json({ ok: false }); }
+  try {
+    await getUserFromReq(req);
+    const store = await db.collection('store').findOne({ _id: 'main' });
+    res.json({ ok: true, store });
+  } catch (err) { res.status(401).json({ ok: false }); }
 });
 
 app.post('/api/store/update', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner') throw new Error('للمالك فقط');
+
     const { name, cover, logo } = req.body;
     const updateData = {};
     if (name) updateData.name = name;
     if (cover !== undefined) updateData.cover = cover;
     if (logo !== undefined) updateData.logo = logo;
+
     await db.collection('store').updateOne({ _id: 'main' }, { $set: updateData });
     const store = await db.collection('store').findOne({ _id: 'main' });
     res.json({ ok: true, store });
@@ -620,27 +653,37 @@ app.post('/api/store/update-links', async (req, res) => {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner') throw new Error('للمالك فقط');
     const { links } = req.body;
+
     await db.collection('store').updateOne({ _id: 'main' }, { $set: { menuLinks: links } });
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
+// ✅ زر CTA الرئيسي
 app.post('/api/store/update-hero-button', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner') throw new Error('للمالك فقط');
     const { text, link, color } = req.body;
-    const heroButton = { text: text || 'تسوق الآن', link: link || '#shop', color: color || '#4A90E2' };
+    const heroButton = {
+      text: text || 'تسوق الآن',
+      link: link || '#shop',
+      color: color || '#4A90E2'
+    };
     await db.collection('store').updateOne({ _id: 'main' }, { $set: { heroButton } });
     res.json({ ok: true, heroButton });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* ===== السلايدر ===== */
-
+/* =========================================================
+   السلايدر
+   ========================================================= */
 app.post('/api/slider', async (req, res) => {
-  try { await getUserFromReq(req); const slider = await db.collection('slider').findOne({ _id: 'main' }); res.json({ ok: true, slides: slider?.slides || [] }); }
-  catch (_) { res.status(401).json({ ok: false }); }
+  try {
+    await getUserFromReq(req);
+    const slider = await db.collection('slider').findOne({ _id: 'main' });
+    res.json({ ok: true, slides: slider?.slides || [] });
+  } catch (err) { res.status(401).json({ ok: false }); }
 });
 
 app.post('/api/slider/add', async (req, res) => {
@@ -665,11 +708,15 @@ app.post('/api/slider/delete', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* ===== الأقسام الديناميكية ===== */
-
+/* =========================================================
+   الأقسام الديناميكية
+   ========================================================= */
 app.post('/api/sections', async (req, res) => {
-  try { await getUserFromReq(req); const sections = await getSectionsList(); res.json({ ok: true, sections }); }
-  catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+  try {
+    await getUserFromReq(req);
+    const sections = await getSectionsList();
+    res.json({ ok: true, sections });
+  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
 
 app.post('/api/sections/add', async (req, res) => {
@@ -680,11 +727,21 @@ app.post('/api/sections/add', async (req, res) => {
     if (!title) throw new Error('العنوان مطلوب');
     const allowedTypes = ['grid', 'text', 'image', 'products', 'banner'];
     if (!allowedTypes.includes(type)) throw new Error('نوع القسم غير مدعوم');
+
     const list = await getSectionsList();
     const newSection = {
-      id: Date.now().toString(), title: title || '', type, image: image || '', content: content || '',
-      buttonText: buttonText || '', buttonLink: buttonLink || '', items: Array.isArray(items) ? items : [],
-      order: list.length, visible: true, creatorId: user.id, createdAt: new Date().toISOString()
+      id: Date.now().toString(),
+      title: title || '',
+      type,
+      image: image || '',
+      content: content || '',
+      buttonText: buttonText || '',
+      buttonLink: buttonLink || '',
+      items: Array.isArray(items) ? items : [],
+      order: list.length,
+      visible: true,
+      creatorId: user.id,
+      createdAt: new Date().toISOString()
     };
     list.push(newSection);
     await saveSectionsList(list);
@@ -759,20 +816,24 @@ app.post('/api/sections/reorder', async (req, res) => {
     let list = await getSectionsList();
     const orderMap = {};
     orders.forEach(o => { orderMap[o.id] = Number(o.order) || 0; });
-    list = list.map(s => ({ ...s, order: orderMap[s.id] !== undefined ? orderMap[s.id] : (s.order || 0) }));
+    list = list.map(s => ({ ...s, order: (orderMap[s.id] !== undefined) ? orderMap[s.id] : (s.order || 0) }));
     list = list.sort((a, b) => (a.order || 0) - (b.order || 0)).map((s, i) => ({ ...s, order: i }));
     await saveSectionsList(list);
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* ===== التصنيفات ===== */
-
+/* =========================================================
+   التصنيفات
+   ========================================================= */
 app.post('/api/categories', async (req, res) => {
   try {
     await getUserFromReq(req);
     const doc = await db.collection('categories').findOne({ _id: 'main' });
-    const categories = (doc?.list || []).map(cat => ({ ...cat, link: cat.id === 'all' ? '#shop' : `#category-${cat.id}` }));
+    const categories = (doc?.list || []).map(cat => ({
+      ...cat,
+      link: cat.id === 'all' ? '#shop' : `#category-${cat.id}`
+    }));
     res.json({ ok: true, categories });
   } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
@@ -798,11 +859,15 @@ app.post('/api/categories/save', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* ===== الشارات ===== */
-
+/* =========================================================
+   شارات المنتجات القابلة للإدارة
+   ========================================================= */
 app.post('/api/badges', async (req, res) => {
-  try { await getUserFromReq(req); const doc = await db.collection('badges').findOne({ _id: 'main' }); res.json({ ok: true, badges: doc?.list || [] }); }
-  catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+  try {
+    await getUserFromReq(req);
+    const doc = await db.collection('badges').findOne({ _id: 'main' });
+    res.json({ ok: true, badges: doc?.list || [] });
+  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
 
 app.post('/api/badges/save', async (req, res) => {
@@ -829,11 +894,15 @@ app.post('/api/badges/save', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* ===== الأيقونات المربعة ===== */
-
+/* =========================================================
+   ✅ الأيقونات المربعة
+   ========================================================= */
 app.post('/api/quick-icons', async (req, res) => {
-  try { await getUserFromReq(req); const icons = await getQuickIconsList(); res.json({ ok: true, icons }); }
-  catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+  try {
+    await getUserFromReq(req);
+    const icons = await getQuickIconsList();
+    res.json({ ok: true, icons });
+  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
 
 app.post('/api/quick-icons/save', async (req, res) => {
@@ -847,15 +916,17 @@ app.post('/api/quick-icons/save', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* ===== الإشعارات وبوابات الدفع ===== */
-
+/* =========================================================
+   DAYO V2 — إشعارات + بوابات الدفع
+   ========================================================= */
 async function addNotification(userId, title, body, type = 'info', link = 'orders', meta = {}) {
   if (!userId) return;
   await db.collection('notifications').insertOne({
     id: crypto.randomUUID(), userId: String(userId),
     title: String(title || '').slice(0, 120), body: String(body || '').slice(0, 500),
     type: ['success', 'warning', 'offer', 'info'].includes(type) ? type : 'info',
-    link: String(link || 'orders').slice(0, 120), meta, readAt: null, createdAt: new Date()
+    link: String(link || 'orders').slice(0, 120), meta,
+    readAt: null, createdAt: new Date()
   });
 }
 
@@ -872,12 +943,6 @@ async function telegramApi(method, payload) {
   if (!response.ok || !data.ok) throw new Error(data.description || `Telegram API ${method} failed`);
   return data.result;
 }
-
-const ORDER_STATUSES = ['awaiting_payment', 'paid', 'processing', 'completed', 'cancelled', 'rejected'];
-const ORDER_STATUS_LABELS = {
-  awaiting_payment: 'بانتظار الدفع', paid: 'تم تأكيد الدفع', processing: 'قيد التنفيذ',
-  completed: 'مكتمل', cancelled: 'ملغي', rejected: 'مرفوض'
-};
 
 async function createStarsInvoice(order) {
   const webhookSecret = await getStarsWebhookSecret();
@@ -917,6 +982,7 @@ async function markOrderPaid(order, source, chargeReference = '') {
   return result.modifiedCount > 0;
 }
 
+/* إشعارات العملاء والإدارة */
 app.post('/api/notifications/mine', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -937,14 +1003,11 @@ app.post('/api/notifications/read', async (req, res) => {
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
-/* Webhook Telegram Stars */
+/* Webhook Telegram Stars: يجيب على pre_checkout_query ثم يعتمد successful_payment فقط. */
 app.post('/api/telegram/webhook', async (req, res) => {
   try {
     const webhookSecret = await getStarsWebhookSecret();
-    const headerSecret = String(req.headers['x-telegram-bot-api-secret-token'] || '');
-    if (!webhookSecret || headerSecret.length !== webhookSecret.length || !crypto.timingSafeEqual(Buffer.from(headerSecret), Buffer.from(webhookSecret))) {
-      return res.status(401).send('Unauthorized');
-    }
+    if (!webhookSecret || req.headers['x-telegram-bot-api-secret-token'] !== webhookSecret) return res.status(401).send('Unauthorized');
     const update = req.body || {};
     if (update.pre_checkout_query) {
       const query = update.pre_checkout_query;
@@ -965,23 +1028,25 @@ app.post('/api/telegram/webhook', async (req, res) => {
   } catch (err) { console.error('Telegram payment webhook error:', err.message); res.status(200).send('OK'); }
 });
 
-/* ===== الطلبات والدفع ===== */
-
-const ORDER_CURRENCIES = ['sar', 'usd', 'ton', 'stars'];
+/* =========================================================
+   DAYO ORDERS V1 — الطلبات والدفع
+   ========================================================= */
+const ORDER_STATUSES = ['awaiting_payment', 'paid', 'processing', 'completed', 'cancelled', 'rejected'];
+const ORDER_STATUS_LABELS = {
+  awaiting_payment: 'بانتظار الدفع', paid: 'تم تأكيد الدفع', processing: 'قيد التنفيذ',
+  completed: 'مكتمل', cancelled: 'ملغي', rejected: 'مرفوض'
+};
+const ORDER_CURRENCIES = ['sar', 'usd', 'ton', 'stars']; // usd هنا تعني USDT على شبكة TON
 
 function cleanOrderCurrency(value) {
   const currency = String(value || '').toLowerCase();
   if (!ORDER_CURRENCIES.includes(currency)) throw new Error('عملة الطلب غير مدعومة');
   return currency;
 }
-
 function orderRound(value, currency) {
   return currency === 'stars' ? Math.round(value) : Math.round((value + Number.EPSILON) * 1000000) / 1000000;
 }
-
-function moneyForServer(value, currency) {
-  return `${Number(value || 0)} ${{ sar: 'ر.س', usd: 'USDT', ton: 'TON', stars: '⭐' }[currency] || currency}`;
-}
+function moneyForServer(value, currency) { return `${Number(value || 0)} ${{sar:'ر.س',usd:'USDT',ton:'TON',stars:'⭐'}[currency] || currency}`; }
 
 function getDiscountedUnitPrice(product, currency) {
   const raw = Number(product?.prices?.[currency] || 0);
@@ -989,32 +1054,23 @@ function getDiscountedUnitPrice(product, currency) {
   const discount = Math.min(100, Math.max(0, Number(product.discount) || 0));
   return orderRound(raw * (1 - discount / 100), currency);
 }
-
 async function getPaymentSettings() {
   const saved = await getPaymentConfigRaw();
   const publicBaseUrl = await getPublicBaseUrl();
   const starsSecret = await getStarsWebhookSecret();
-  let tonApiKey = '', tonMasterAddress = '';
-  try { tonApiKey = await getTonCenterApiKey(); } catch (_) { tonApiKey = ''; }
-  try { tonMasterAddress = await getTonUsdtMasterAddress(); } catch (_) { tonMasterAddress = ''; }
-  const tonReceiverAddress = String(saved.tonReceiverAddress || '').trim();
-  const tonUsdtReceiverAddress = String(saved.tonUsdtReceiverAddress || '').trim();
-  const tonConnectTonEnabled = saved.tonConnectTonEnabled ?? true;
-  const tonConnectUsdtEnabled = saved.tonConnectUsdtEnabled ?? true;
-  const tonReady = !!tonReceiverAddress && !!tonApiKey && !!tonMasterAddress;
+  const tonReceiverAddress = String(saved.tonReceiverAddress || '');
+  const tonConnectReady = !!tonReceiverAddress && !!TONCENTER_API_KEY;
   return {
     manualEnabled: saved.manualEnabled !== false,
     manualInstructions: typeof saved.manualInstructions === 'string' ? saved.manualInstructions : '',
     manualPaymentUsername: typeof saved.manualPaymentUsername === 'string' ? saved.manualPaymentUsername : '',
-    tonConnectEnabled: saved.tonConnectEnabled === true && tonReady,
-    tonConnectReady: tonReady,
-    tonConnectTonEnabled,
-    tonConnectUsdtEnabled,
+    tonConnectEnabled: saved.tonConnectEnabled !== false && tonConnectReady,
+    tonEnabled: saved.tonEnabled !== false,
+    usdtEnabled: saved.usdtEnabled !== false,
+    tonConnectReady,
     tonReceiverAddress,
-    tonUsdtReceiverAddress: tonUsdtReceiverAddress || tonReceiverAddress,
-    tonUsdtMasterAddress: tonMasterAddress,
-    tonCenterApiKeyConfigured: !!tonApiKey,
-    starsEnabled: saved.starsEnabled !== false && !!starsSecret && !!publicBaseUrl && (saved.starsWebhookConfigured === true || !!(ENV_TELEGRAM_WEBHOOK_SECRET && ENV_PUBLIC_BASE_URL)),
+    tonUsdtMasterAddress: TON_USDT_MASTER_ADDRESS,
+    starsEnabled: saved.starsEnabled !== false && !!(starsSecret && publicBaseUrl) && (saved.starsWebhookConfigured === true || !!(ENV_TELEGRAM_WEBHOOK_SECRET && ENV_PUBLIC_BASE_URL)),
     starsSecretConfigured: !!starsSecret,
     publicBaseUrl,
     telegramWebhookUrl: publicBaseUrl ? `${publicBaseUrl}/api/telegram/webhook` : '',
@@ -1027,15 +1083,7 @@ app.post('/api/payments/settings', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     const settings = await getPaymentSettings();
-    if (user.role === 'owner') {
-      const saved = await getPaymentConfigRaw();
-      settings.ownerTonSettings = {
-        tonReceiverAddress: String(saved.tonReceiverAddress || '').trim(),
-        tonUsdtReceiverAddress: String(saved.tonUsdtReceiverAddress || '').trim(),
-        tonUsdtMasterAddress: String(saved.tonUsdtMasterAddress || ENV_TON_USDT_MASTER_ADDRESS || '').trim(),
-        tonCenterApiKeyConfigured: settings.tonCenterApiKeyConfigured
-      };
-    }
+    // Never return provider API tokens or webhook secrets to the browser.
     res.json({ ok: true, settings, role: user.role });
   } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
@@ -1044,68 +1092,59 @@ app.post('/api/payments/settings/save', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية');
+
+    const manualEnabled = req.body?.manualEnabled !== false;
+    const manualInstructions = String(req.body?.manualInstructions || '').trim().slice(0, 2000);
+    const manualPaymentUsername = String(req.body?.manualPaymentUsername || '').trim().replace(/^@/, '');
+    const tonConnectEnabled = req.body?.tonConnectEnabled === true;
+    const tonEnabled = req.body?.tonEnabled === true;
+    const usdtEnabled = req.body?.usdtEnabled === true;
+    const starsEnabled = req.body?.starsEnabled === true;
+    const publicBaseUrl = String(req.body?.publicBaseUrl || '').trim().replace(/\/$/, '');
+    const tonReceiverAddressInput = String(req.body?.tonReceiverAddress || '').trim();
+
     const previous = await getPaymentConfigRaw();
-    const isOwner = user.role === 'owner';
-    const protectedTonKeys = ['tonConnectEnabled', 'tonConnectTonEnabled', 'tonConnectUsdtEnabled', 'tonReceiverAddress', 'tonUsdtReceiverAddress', 'tonUsdtMasterAddress'];
-    if (!isOwner) {
-      for (const key of protectedTonKeys) {
-        const sent = req.body?.[key];
-        if (sent === undefined || sent === null) continue;
-        const current = previous?.[key];
-        if (typeof sent === 'string' && sent.trim() === '' && String(current ?? '').trim() === '') continue;
-        if (String(sent).trim() !== String(current ?? '').trim()) throw new Error('إعدادات TON و USDT متاحة للمالك فقط');
-      }
-      if (String(req.body?.tonCenterApiToken || '').trim()) throw new Error('إضافة أو تحديث مفتاح TON Center API متاح للمالك فقط');
+    const currentReceiverAddress = String(previous.tonReceiverAddress || '').trim();
+    if (tonReceiverAddressInput !== currentReceiverAddress && user.role !== 'owner') {
+      throw new Error('تغيير عنوان محفظة الاستقبال متاح للمالك فقط');
     }
-    const manualEnabled = req.body?.manualEnabled === undefined ? previous.manualEnabled !== false : req.body.manualEnabled !== false;
-    const manualInstructions = req.body?.manualInstructions === undefined ? String(previous.manualInstructions || '') : String(req.body.manualInstructions || '').trim().slice(0, 2000);
-    const manualPaymentUsername = req.body?.manualPaymentUsername === undefined ? String(previous.manualPaymentUsername || '') : String(req.body.manualPaymentUsername || '').trim().replace(/^@/, '');
-    const starsEnabled = req.body?.starsEnabled === undefined ? previous.starsEnabled !== false : req.body.starsEnabled === true;
-    const publicBaseUrl = req.body?.publicBaseUrl === undefined ? String(previous.publicBaseUrl || ENV_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '') : String(req.body.publicBaseUrl || '').trim().replace(/\/+$/, '');
-    const tonConnectEnabled = isOwner ? (req.body?.tonConnectEnabled === undefined ? previous.tonConnectEnabled === true : req.body.tonConnectEnabled !== false) : previous.tonConnectEnabled === true;
-    const tonConnectTonEnabled = isOwner ? (req.body?.tonConnectTonEnabled === undefined ? (previous.tonConnectTonEnabled ?? true) : req.body.tonConnectTonEnabled !== false) : (previous.tonConnectTonEnabled ?? true);
-    const tonConnectUsdtEnabled = isOwner ? (req.body?.tonConnectUsdtEnabled === undefined ? (previous.tonConnectUsdtEnabled ?? true) : req.body.tonConnectUsdtEnabled !== false) : (previous.tonConnectUsdtEnabled ?? true);
-    const tonReceiverAddressInput = isOwner ? (req.body?.tonReceiverAddress === undefined ? String(previous.tonReceiverAddress || '').trim() : String(req.body.tonReceiverAddress || '').trim()) : String(previous.tonReceiverAddress || '').trim();
-    const tonUsdtReceiverAddressInput = isOwner ? (req.body?.tonUsdtReceiverAddress === undefined ? String(previous.tonUsdtReceiverAddress || '').trim() : String(req.body.tonUsdtReceiverAddress || '').trim()) : String(previous.tonUsdtReceiverAddress || '').trim();
-    const tonUsdtMasterAddressInput = isOwner ? (req.body?.tonUsdtMasterAddress === undefined ? String(previous.tonUsdtMasterAddress || ENV_TON_USDT_MASTER_ADDRESS || '').trim() : String(req.body.tonUsdtMasterAddress || '').trim()) : String(previous.tonUsdtMasterAddress || ENV_TON_USDT_MASTER_ADDRESS || '').trim();
-    const newTonCenterApiToken = isOwner ? String(req.body?.tonCenterApiToken || '').trim() : '';
-
-    if (manualEnabled && !/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(manualPaymentUsername)) throw new Error('أدخل يوزر تيليجرام صحيحًا لحساب استقبال الدفع');
-    if (starsEnabled && !/^https:\/\//i.test(publicBaseUrl)) throw new Error('أدخل رابط المتجر العام ويجب أن يبدأ بـ https://');
-    if (tonReceiverAddressInput && !isValidTonAddress(tonReceiverAddressInput)) throw new Error('عنوان محفظة استقبال TON غير صالح');
-    if (tonUsdtReceiverAddressInput && !isValidTonAddress(tonUsdtReceiverAddressInput)) throw new Error('عنوان محفظة استقبال USDT غير صالح');
-    if (tonUsdtMasterAddressInput && !isValidTonAddress(tonUsdtMasterAddressInput)) throw new Error('عنوان عقد USDT على شبكة TON غير صالح');
-    if (newTonCenterApiToken && newTonCenterApiToken.length < 10) throw new Error('مفتاح TON Center API قصير أو غير صالح');
-    if (tonConnectEnabled && (tonConnectTonEnabled || tonConnectUsdtEnabled)) {
-      if (!tonReceiverAddressInput) throw new Error('أدخل عنوان محفظة استقبال TON أولًا');
-      const existingTonApiKey = await getTonCenterApiKey();
-      const effectiveTonApiKey = newTonCenterApiToken || existingTonApiKey;
-      if (!effectiveTonApiKey) throw new Error('أضف مفتاح TON Center API من لوحة التحكم أولًا');
+    if (tonReceiverAddressInput) normalizeTonAddress(tonReceiverAddressInput);
+    const effectiveReceiverAddress = tonReceiverAddressInput || currentReceiverAddress;
+    if (tonConnectEnabled && (tonEnabled || usdtEnabled) && !effectiveReceiverAddress) {
+      throw new Error('أدخل عنوان محفظة الاستقبال من حساب المالك أولًا');
+    }
+    if (manualEnabled && !/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(manualPaymentUsername)) {
+      throw new Error('أدخل يوزر تيليجرام صحيحًا لحساب استقبال الدفع');
+    }
+    if (starsEnabled && !/^https:\/\//i.test(publicBaseUrl)) {
+      throw new Error('أدخل رابط المتجر العام ويجب أن يبدأ بـ https://');
     }
 
+    const baseUrlChanged = !!(previous.publicBaseUrl && previous.publicBaseUrl !== publicBaseUrl);
     const paymentSettings = {
       ...previous,
       manualEnabled, manualInstructions, manualPaymentUsername,
-      tonConnectEnabled, tonConnectTonEnabled, tonConnectUsdtEnabled,
-      tonReceiverAddress: tonReceiverAddressInput,
-      tonUsdtReceiverAddress: tonUsdtReceiverAddressInput,
-      tonUsdtMasterAddress: tonUsdtMasterAddressInput || ENV_TON_USDT_MASTER_ADDRESS,
-      starsEnabled, publicBaseUrl,
+      tonConnectEnabled, tonEnabled, usdtEnabled, starsEnabled,
+      tonReceiverAddress: effectiveReceiverAddress,
+      publicBaseUrl,
       updatedAt: new Date(), updatedBy: String(user.id)
     };
+    // Remove deprecated Crypto Pay configuration from active settings.
     delete paymentSettings.cryptoEnabled;
     delete paymentSettings.cryptoTonEnabled;
     delete paymentSettings.cryptoUsdtEnabled;
     delete paymentSettings.cryptoWebhookConfigured;
     delete paymentSettings.cryptoPayTokenEnc;
-    if (newTonCenterApiToken) paymentSettings.tonCenterApiKeyEnc = encryptPaymentSecret(newTonCenterApiToken);
-    if (starsEnabled && !previous.starsWebhookSecretEnc && !ENV_TELEGRAM_WEBHOOK_SECRET) paymentSettings.starsWebhookSecretEnc = encryptPaymentSecret(crypto.randomBytes(32).toString('hex'));
-    if (previous.publicBaseUrl && previous.publicBaseUrl !== publicBaseUrl) paymentSettings.starsWebhookConfigured = false;
+    if (baseUrlChanged) paymentSettings.starsWebhookConfigured = false;
+    if (starsEnabled && !previous.starsWebhookSecretEnc && !ENV_TELEGRAM_WEBHOOK_SECRET) {
+      paymentSettings.starsWebhookSecretEnc = encryptPaymentSecret(crypto.randomBytes(32).toString('hex'));
+    }
     await db.collection('store').updateOne({ _id: 'main' }, { $set: { paymentSettings } }, { upsert: true });
     res.json({ ok: true, settings: await getPaymentSettings() });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
+// Safe Stars webhook setup: it never overwrites a different existing bot webhook.
 app.post('/api/payments/telegram-webhook/setup', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -1147,6 +1186,7 @@ app.post('/api/orders/create', async (req, res) => {
       merged.set(productId, (merged.get(productId) || 0) + quantity);
     }
     if ([...merged.values()].some(q => q > 20)) throw new Error('الحد الأعلى للكمية هو 20 للمنتج الواحد');
+
     const lines = [];
     let total = 0;
     for (const [productId, quantity] of merged.entries()) {
@@ -1159,29 +1199,35 @@ app.post('/api/orders/create', async (req, res) => {
       lines.push({ productId: String(product.id), name: String(product.name || 'منتج').slice(0, 150), quantity, unitPrice, lineTotal });
     }
     if (currency === 'sar' && (!settings.manualEnabled || !settings.manualPaymentUsername)) throw new Error('الدفع اليدوي بالريال غير مهيأ حاليًا');
-    if (['ton', 'usd'].includes(currency)) {
-      if (!settings.tonConnectEnabled) throw new Error('الدفع عبر TON Connect غير مهيأ حاليًا');
-      if (currency === 'ton' && !settings.tonConnectTonEnabled) throw new Error('الدفع بعملة TON غير مفعّل حاليًا من لوحة التحكم');
-      if (currency === 'usd' && !settings.tonConnectUsdtEnabled) throw new Error('الدفع بعملة USDT على شبكة TON غير مفعّل حاليًا من لوحة التحكم');
-    }
-    if (currency === 'stars' && !settings.starsEnabled) throw new Error('الدفع عبر Telegram Stars غير مفعّل حاليًا من لوحة التحكم');
+    if (['ton', 'usd'].includes(currency) && (
+      !settings.tonConnectEnabled ||
+      (currency === 'ton' && !settings.tonEnabled) ||
+      (currency === 'usd' && !settings.usdtEnabled)
+    )) throw new Error('وسيلة الدفع بهذه العملة غير مفعّلة حاليًا من لوحة التحكم.');
+    if (currency === 'stars' && !settings.starsEnabled) throw new Error('الدفع عبر Telegram Stars غير مفعّل حاليًا من لوحة التحكم.');
     if (!(total > 0)) throw new Error('إجمالي الطلب غير صالح');
     if (currency === 'stars' && (!Number.isInteger(total) || total > 100000)) throw new Error('قيمة Stars غير صحيحة أو تتجاوز الحد المسموح');
+
     const now = new Date();
     const randomPart = crypto.randomBytes(3).toString('hex').toUpperCase();
     const orderCode = `DY-${Date.now().toString(36).toUpperCase()}-${randomPart}`;
     const order = {
-      id: crypto.randomUUID(), orderCode, userId: String(user.id), customerName: String(user.name || 'عميل').slice(0, 100),
-      items: lines, currency, total, paymentMethod, paymentStatus: 'pending', paymentReference: '',
+      id: crypto.randomUUID(), orderCode,
+      userId: String(user.id), customerName: String(user.name || 'عميل').slice(0, 100),
+      items: lines, currency, total, paymentMethod,
+      paymentStatus: 'pending', paymentReference: '',
       status: 'awaiting_payment', statusLabel: ORDER_STATUS_LABELS.awaiting_payment,
       paymentInstructions: paymentMethod === 'manual' ? settings.manualInstructions : '',
       manualPaymentUsername: paymentMethod === 'manual' ? settings.manualPaymentUsername : '',
       paymentNotified: false, createdAt: now, updatedAt: now, salesCountedAt: null
     };
     await db.collection('orders').insertOne(order);
+
     let checkoutUrl = '';
     try {
-      if (paymentMethod === 'stars') {
+      if (paymentMethod === 'tonconnect') {
+        // TON Connect transaction is prepared only after the customer connects their wallet.
+      } else if (paymentMethod === 'stars') {
         checkoutUrl = await createStarsInvoice(order);
         await db.collection('orders').updateOne({ id: order.id }, { $set: { providerPayUrl: checkoutUrl, providerCreatedAt: new Date() } });
       }
@@ -1189,13 +1235,19 @@ app.post('/api/orders/create', async (req, res) => {
       await db.collection('orders').deleteOne({ id: order.id });
       throw providerError;
     }
+
     await Promise.allSettled([
       addNotification(order.userId, 'تم إنشاء طلبك', `تم استلام طلبك ${order.orderCode}. ${paymentMethod === 'manual' ? 'أكمل التحويل اليدوي لتأكيده.' : 'أكمل الدفع لتأكيد الطلب.'}`, 'info', 'orders', { orderId: order.id }),
       notifyAdmins('طلب جديد', `وصل طلب جديد ${order.orderCode} بقيمة ${moneyForServer(total, currency)}.`, 'info')
     ]);
-    res.json({ ok: true, order: { id: order.id, orderCode, total, currency, status: order.status, paymentMethod, paymentInstructions: order.paymentInstructions, manualPaymentUsername: order.manualPaymentUsername }, checkoutUrl });
+    res.json({
+      ok: true,
+      order: { id: order.id, orderCode, total, currency, status: order.status, paymentMethod, paymentInstructions: order.paymentInstructions, manualPaymentUsername: order.manualPaymentUsername },
+      checkoutUrl
+    });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
+
 
 app.post('/api/ton/prepare', async (req, res) => {
   try {
@@ -1204,20 +1256,16 @@ app.post('/api/ton/prepare', async (req, res) => {
     const walletAddress = String(req.body?.walletAddress || '');
     const order = await db.collection('orders').findOne({ id: orderId, userId: user.id, paymentMethod: 'tonconnect', status: 'awaiting_payment' });
     if (!order) throw new Error('الطلب غير موجود أو لم يعد بانتظار الدفع');
-    const settings = await getPaymentSettings();
-    if (!settings.tonConnectEnabled) throw new Error('الدفع عبر TON Connect غير مهيأ حاليًا');
-    if (order.currency === 'ton' && !settings.tonConnectTonEnabled) throw new Error('الدفع بعملة TON غير مفعّل حاليًا من لوحة التحكم');
-    if (order.currency === 'usd' && !settings.tonConnectUsdtEnabled) throw new Error('الدفع بعملة USDT على شبكة TON غير مفعّل حاليًا من لوحة التحكم');
-    const receiverAddress = await getTonReceiverAddress(order.currency);
-    const sender = parseMainnetTonAddress(walletAddress);
+    if (!TONCENTER_API_KEY) throw new Error('أضف TONCENTER_API_KEY في إعدادات Render لتفعيل التحقق من معاملات TON');
+    const receiverAddress = await getTonReceiverAddress();
+    const sender = Address.parse(walletAddress);
     await db.collection('orders').updateOne({ id: order.id, userId: user.id }, { $set: { tonSenderAddress: sender.toRawString().toLowerCase(), tonPaymentPreparedAt: new Date(), updatedAt: new Date() } });
     const comment = createOrderComment(order.orderCode).toBoc().toString('base64');
     let message;
     if (order.currency === 'ton') {
       message = { address: receiverAddress.toString({ urlSafe: true, bounceable: true }), amount: decimalToUnits(order.total, 9), payload: comment };
     } else if (order.currency === 'usd') {
-      const masterAddress = await getTonUsdtMasterAddress();
-      const senderJettonWallet = await getJettonWalletAddress(sender.toString({ urlSafe: true, bounceable: true }), masterAddress);
+      const senderJettonWallet = await getJettonWalletAddress(sender.toString({ urlSafe: true, bounceable: true }));
       const forwardPayload = createOrderComment(order.orderCode);
       const jettonBody = beginCell()
         .storeUint(0xf8a7ea5, 32)
@@ -1230,10 +1278,8 @@ app.post('/api/ton/prepare', async (req, res) => {
         .storeBit(1)
         .storeRef(forwardPayload)
         .endCell();
-      message = { address: senderJettonWallet.toString({ urlSafe: true, bounceable: true }), amount: '100000000', payload: jettonBody.toBoc().toString('base64') };
-    } else {
-      throw new Error('عملة الطلب غير مدعومة');
-    }
+      message = { address: senderJettonWallet.toString({ urlSafe: true, bounceable: true }), amount: '50000000', payload: jettonBody.toBoc().toString('base64') };
+    } else throw new Error('عملة الطلب غير مدعومة');
     res.json({ ok: true, transaction: { validUntil: Math.floor(Date.now() / 1000) + 300, network: TON_NETWORK, messages: [message] } });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
@@ -1292,7 +1338,10 @@ app.post('/api/orders/submit-reference', async (req, res) => {
     const orderId = String(req.body?.orderId || '').trim();
     const reference = String(req.body?.reference || '').trim().slice(0, 300);
     if (!orderId || reference.length < 3) throw new Error('أدخل رقم العملية أو مرجع التحويل بشكل صحيح');
-    const result = await db.collection('orders').updateOne({ id: orderId, userId: user.id, status: 'awaiting_payment' }, { $set: { paymentReference: reference, paymentReferenceAt: new Date(), updatedAt: new Date() } });
+    const result = await db.collection('orders').updateOne(
+      { id: orderId, userId: user.id, status: 'awaiting_payment' },
+      { $set: { paymentReference: reference, paymentReferenceAt: new Date(), updatedAt: new Date() } }
+    );
     if (!result.matchedCount) throw new Error('الطلب غير موجود أو لم يعد بانتظار الدفع');
     res.json({ ok: true });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
@@ -1331,16 +1380,28 @@ app.post('/api/orders/update-status', async (req, res) => {
     const orders = db.collection('orders');
     const order = await orders.findOne({ id: orderId });
     if (!order) throw new Error('الطلب غير موجود');
-    if (['paid', 'processing', 'completed'].includes(order.status) && status === 'cancelled') throw new Error('لا يمكن إلغاء طلب تم تأكيد دفعه من هذه الشاشة؛ يلزم إجراء استرداد منفصل');
-    if (['processing', 'completed'].includes(status) && order.paymentStatus !== 'paid') throw new Error('يجب تأكيد الدفع أولًا قبل بدء التنفيذ أو إكمال الطلب');
-    if (status === 'paid' && order.paymentMethod === 'manual' && !order.paymentNotified) throw new Error('لا يمكن تأكيد الدفع قبل أن يرسل العميل إشعار إتمام التحويل');
-    if (status === 'paid' && order.paymentMethod === 'cryptopay') throw new Error('وسيلة الدفع القديمة غير مدعومة بعد إيقاف Crypto Pay؛ لا يمكن تأكيد الدفع تلقائيًا من هنا');
-    if (status === 'paid' && ['stars', 'tonconnect'].includes(order.paymentMethod) && order.paymentStatus !== 'paid') throw new Error('هذا الطلب يستخدم دفعًا تلقائيًا؛ سيتم تأكيده بعد وصول إشعار الدفع الموثوق.');
-    if (status === 'rejected' && order.paymentStatus === 'paid') throw new Error('لا يمكن رفض طلب تم تأكيد دفعه؛ استخدم إجراء استرداد منفصل');
+    if (['paid', 'processing', 'completed'].includes(order.status) && status === 'cancelled') {
+      throw new Error('لا يمكن إلغاء طلب تم تأكيد دفعه من هذه الشاشة؛ يلزم إجراء استرداد منفصل');
+    }
+    if (['processing', 'completed'].includes(status) && order.paymentStatus !== 'paid') {
+      throw new Error('يجب تأكيد الدفع أولًا قبل بدء التنفيذ أو إكمال الطلب');
+    }
+    if (status === 'paid' && order.paymentMethod === 'manual' && !order.paymentNotified) {
+      throw new Error('لا يمكن تأكيد الدفع قبل أن يرسل العميل إشعار إتمام التحويل');
+    }
+    if (status === 'paid' && ['stars', 'tonconnect'].includes(order.paymentMethod) && order.paymentStatus !== 'paid') {
+      throw new Error('هذا الطلب يستخدم دفعًا تلقائيًا؛ سيتم تأكيده بعد وصول إشعار الدفع الموثوق.');
+    }
+    if (status === 'rejected' && order.paymentStatus === 'paid') {
+      throw new Error('لا يمكن رفض طلب تم تأكيد دفعه؛ استخدم إجراء استرداد منفصل');
+    }
     const update = { status, statusLabel: ORDER_STATUS_LABELS[status], updatedAt: new Date(), updatedBy: user.id };
     if (status === 'paid' && !order.salesCountedAt) {
       const countedAt = new Date();
-      const claim = await orders.updateOne({ id: orderId, $or: [{ salesCountedAt: null }, { salesCountedAt: { $exists: false } }] }, { $set: { ...update, salesCountedAt: countedAt, paymentStatus: 'paid' } });
+      const claim = await orders.updateOne(
+        { id: orderId, $or: [{ salesCountedAt: null }, { salesCountedAt: { $exists: false } }] },
+        { $set: { ...update, salesCountedAt: countedAt, paymentStatus: 'paid' } }
+      );
       if (claim.modifiedCount) {
         for (const line of order.items || []) {
           await db.collection('products').updateOne({ id: line.productId }, { $inc: { soldCount: Number(line.quantity) || 1 } });
@@ -1352,6 +1413,7 @@ app.post('/api/orders/update-status', async (req, res) => {
       if (status === 'rejected') update.paymentStatus = 'rejected';
       await orders.updateOne({ id: orderId }, { $set: update });
     }
+    const updatedOrder = await orders.findOne({ id: orderId });
     const notificationText = {
       paid: 'تم تأكيد دفع طلبك، وسيتم تجهيزه قريبًا.',
       processing: 'بدأ فريق DAYO تنفيذ طلبك.',
@@ -1364,8 +1426,9 @@ app.post('/api/orders/update-status', async (req, res) => {
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
-/* ===== Health + تشغيل ===== */
-
+/* =========================================================
+   Health + تشغيل
+   ========================================================= */
 app.get('/health', (req, res) => res.status(200).send('OK'));
 app.head('/health', (req, res) => res.status(200).end());
 
