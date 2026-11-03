@@ -1,0 +1,21 @@
+
+{
+  "name": "chat",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@tma.js/init-data-node": "^2.0.8",
+    "@ton/core": "^0.63.1",
+    "@ton/ton": "^16.3.0",
+    "express": "^5.3.0",
+    "mongodb": "^7.7.0"
+  }
+}
