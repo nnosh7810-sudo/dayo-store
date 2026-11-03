@@ -31,8 +31,9 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const OWNER_TELEGRAM_ID = process.env.OWNER_TELEGRAM_ID || '51442749';
 const ENV_TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
 const ENV_PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '');
-const TONCENTER_API_KEY = String(process.env.TONCENTER_API_KEY || '').trim();
-const TON_USDT_MASTER_ADDRESS = String(process.env.TON_USDT_MASTER_ADDRESS || 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs').trim();
+const ENV_TONCENTER_API_KEY = String(process.env.TONCENTER_API_KEY || '').trim();
+const ENV_TON_USDT_MASTER_ADDRESS = String(process.env.TON_USDT_MASTER_ADDRESS || '').trim();
+const DEFAULT_TON_USDT_MASTER_ADDRESS = 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs';
 const TON_NETWORK = '-239';
 
 if (!BOT_TOKEN) throw new Error('يرجى ضبط BOT_TOKEN في متغيرات البيئة');
@@ -89,9 +90,18 @@ async function getPublicBaseUrl() {
 }
 
 
-function getTonClient() {
-  if (!TONCENTER_API_KEY) throw new Error('أضف TONCENTER_API_KEY في إعدادات Render لتفعيل التحقق من معاملات TON');
-  return new TonClient({ endpoint: 'https://toncenter.com/api/v2/jsonRPC', apiKey: TONCENTER_API_KEY });
+async function getTonApiKey() {
+  const saved = await getPaymentConfigRaw();
+  return decryptPaymentSecret(saved.toncenterApiKeyEnc) || ENV_TONCENTER_API_KEY;
+}
+async function getTonUsdtMasterAddress() {
+  const saved = await getPaymentConfigRaw();
+  return String(saved.tonUsdtMasterAddress || ENV_TON_USDT_MASTER_ADDRESS || DEFAULT_TON_USDT_MASTER_ADDRESS).trim();
+}
+async function getTonClient() {
+  const apiKey = await getTonApiKey();
+  if (!apiKey) throw new Error('أضف مفتاح TON Center من لوحة تحكم DAYO > الدفع والتحصيل');
+  return new TonClient({ endpoint: 'https://toncenter.com/api/v2/jsonRPC', apiKey });
 }
 function decimalToUnits(value, decimals) {
   const text = String(value);
@@ -108,9 +118,10 @@ function createOrderComment(orderCode) {
   return beginCell().storeUint(0, 32).storeStringTail(String(orderCode)).endCell();
 }
 async function getJettonWalletAddress(ownerAddress) {
-  const client = getTonClient();
+  const client = await getTonClient();
+  const masterAddress = await getTonUsdtMasterAddress();
   const owner = Address.parse(ownerAddress);
-  const result = await client.runMethod(Address.parse(TON_USDT_MASTER_ADDRESS), 'get_wallet_address', [
+  const result = await client.runMethod(Address.parse(masterAddress), 'get_wallet_address', [
     { type: 'slice', cell: beginCell().storeAddress(owner).endCell() }
   ]);
   return result.stack.readAddress();
@@ -133,7 +144,7 @@ function transactionIsSuccessful(tx) {
   return true;
 }
 async function verifyTonConnectOrder(order) {
-  const client = getTonClient();
+  const client = await getTonClient();
   const receiver = await getTonReceiverAddress();
   const expectedSender = normalizeTonAddress(order.tonSenderAddress || '');
   const since = Math.floor(new Date(order.createdAt).getTime() / 1000) - 120;
@@ -1059,7 +1070,9 @@ async function getPaymentSettings() {
   const publicBaseUrl = await getPublicBaseUrl();
   const starsSecret = await getStarsWebhookSecret();
   const tonReceiverAddress = String(saved.tonReceiverAddress || '');
-  const tonConnectReady = !!tonReceiverAddress && !!TONCENTER_API_KEY;
+  const toncenterApiKeyConfigured = !!(decryptPaymentSecret(saved.toncenterApiKeyEnc) || ENV_TONCENTER_API_KEY);
+  const tonUsdtMasterAddress = String(saved.tonUsdtMasterAddress || ENV_TON_USDT_MASTER_ADDRESS || DEFAULT_TON_USDT_MASTER_ADDRESS);
+  const tonConnectReady = !!tonReceiverAddress && toncenterApiKeyConfigured;
   return {
     manualEnabled: saved.manualEnabled !== false,
     manualInstructions: typeof saved.manualInstructions === 'string' ? saved.manualInstructions : '',
@@ -1069,7 +1082,8 @@ async function getPaymentSettings() {
     usdtEnabled: saved.usdtEnabled !== false,
     tonConnectReady,
     tonReceiverAddress,
-    tonUsdtMasterAddress: TON_USDT_MASTER_ADDRESS,
+    toncenterApiKeyConfigured,
+    tonUsdtMasterAddress,
     starsEnabled: saved.starsEnabled !== false && !!(starsSecret && publicBaseUrl) && (saved.starsWebhookConfigured === true || !!(ENV_TELEGRAM_WEBHOOK_SECRET && ENV_PUBLIC_BASE_URL)),
     starsSecretConfigured: !!starsSecret,
     publicBaseUrl,
@@ -1102,6 +1116,9 @@ app.post('/api/payments/settings/save', async (req, res) => {
     const starsEnabled = req.body?.starsEnabled === true;
     const publicBaseUrl = String(req.body?.publicBaseUrl || '').trim().replace(/\/$/, '');
     const tonReceiverAddressInput = String(req.body?.tonReceiverAddress || '').trim();
+    const toncenterApiKeyInput = String(req.body?.toncenterApiKey || '').trim();
+    const clearToncenterApiKey = req.body?.clearToncenterApiKey === true;
+    const tonUsdtMasterAddressInput = String(req.body?.tonUsdtMasterAddress || '').trim();
 
     const previous = await getPaymentConfigRaw();
     const currentReceiverAddress = String(previous.tonReceiverAddress || '').trim();
@@ -1110,6 +1127,14 @@ app.post('/api/payments/settings/save', async (req, res) => {
     }
     if (tonReceiverAddressInput) normalizeTonAddress(tonReceiverAddressInput);
     const effectiveReceiverAddress = tonReceiverAddressInput || currentReceiverAddress;
+    if ((toncenterApiKeyInput || clearToncenterApiKey || tonUsdtMasterAddressInput) && user.role !== 'owner') {
+      throw new Error('تعديل مفتاح TON Center وعنوان عقد USDT متاح للمالك فقط');
+    }
+    if (tonUsdtMasterAddressInput) {
+      try { Address.parse(tonUsdtMasterAddressInput); }
+      catch (_) { throw new Error('عنوان عقد USDT على شبكة TON غير صالح'); }
+    }
+    if (toncenterApiKeyInput.length > 500) throw new Error('مفتاح TON Center غير صالح');
     if (tonConnectEnabled && (tonEnabled || usdtEnabled) && !effectiveReceiverAddress) {
       throw new Error('أدخل عنوان محفظة الاستقبال من حساب المالك أولًا');
     }
@@ -1129,6 +1154,11 @@ app.post('/api/payments/settings/save', async (req, res) => {
       publicBaseUrl,
       updatedAt: new Date(), updatedBy: String(user.id)
     };
+    if (user.role === 'owner') {
+      if (toncenterApiKeyInput) paymentSettings.toncenterApiKeyEnc = encryptPaymentSecret(toncenterApiKeyInput);
+      if (clearToncenterApiKey) delete paymentSettings.toncenterApiKeyEnc;
+      if (tonUsdtMasterAddressInput) paymentSettings.tonUsdtMasterAddress = Address.parse(tonUsdtMasterAddressInput).toString({ urlSafe: true, bounceable: true });
+    }
     // Remove deprecated Crypto Pay configuration from active settings.
     delete paymentSettings.cryptoEnabled;
     delete paymentSettings.cryptoTonEnabled;
@@ -1256,7 +1286,7 @@ app.post('/api/ton/prepare', async (req, res) => {
     const walletAddress = String(req.body?.walletAddress || '');
     const order = await db.collection('orders').findOne({ id: orderId, userId: user.id, paymentMethod: 'tonconnect', status: 'awaiting_payment' });
     if (!order) throw new Error('الطلب غير موجود أو لم يعد بانتظار الدفع');
-    if (!TONCENTER_API_KEY) throw new Error('أضف TONCENTER_API_KEY في إعدادات Render لتفعيل التحقق من معاملات TON');
+    if (!(await getTonApiKey())) throw new Error('أضف مفتاح TON Center من لوحة تحكم DAYO > الدفع والتحصيل');
     const receiverAddress = await getTonReceiverAddress();
     const sender = Address.parse(walletAddress);
     await db.collection('orders').updateOne({ id: order.id, userId: user.id }, { $set: { tonSenderAddress: sender.toRawString().toLowerCase(), tonPaymentPreparedAt: new Date(), updatedAt: new Date() } });
