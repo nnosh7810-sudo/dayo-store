@@ -1,5 +1,5 @@
 /* ============================================================
-   DAYO STORE — app.js (النسخة النهائية)
+   DAYO STORE — app.js (النسخة النهائية - بدون Crypto Pay)
    ============================================================ */
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
@@ -37,11 +37,10 @@ let quickIcons = [];
 let heroButtonData = { text: 'تسوق الآن', link: '#shop', color: '#4A90E2' };
 let realStats = { totalUsers: 0, onlineUsers: 0, totalProducts: 0, totalSold: 0 };
 
-// DAYO Orders V1: سلة محلية، بينما يتم اعتماد الأسعار والإجمالي من الخادم.
 let cartItems = [];
 let cartCurrency = 'sar';
 let cartPaymentMethod = 'manual';
-let cartPaymentSettings = { manualEnabled: true, manualInstructions: '', manualPaymentUsername: '', cryptoEnabled: false, tonConnectEnabled: false, starsEnabled: true };
+let cartPaymentSettings = { manualEnabled: true, manualInstructions: '', manualPaymentUsername: '', tonConnectEnabled: false, starsEnabled: true };
 let tonConnectUI = null;
 let notificationPoller = null;
 let currentNotifications = [];
@@ -55,8 +54,7 @@ function money(value, currency) { return `${Number(value || 0).toLocaleString('e
 function cartCount() { return cartItems.reduce((sum, item) => sum + item.quantity, 0); }
 function discountedPrice(product, currency) { const raw = Number(product?.prices?.[currency] || 0); return raw > 0 ? raw * (1 - Math.min(100, Math.max(0, Number(product.discount) || 0)) / 100) : 0; }
 
-
-/* ===== إعدادات المظهر: داكن / فاتح ===== */
+/* ===== إعدادات المظهر ===== */
 function applyTheme(theme, persist = true) {
   const selected = theme === 'light' ? 'light' : 'dark';
   document.body.dataset.theme = selected;
@@ -97,7 +95,6 @@ const SECTION_TYPES = {
   banner:   { label: 'بانر دعائي',              color: '#f39c12' }
 };
 
-// حماية المخرجات القادمة من قاعدة البيانات قبل إدراجها داخل HTML.
 function escapeHTML(value) {
   return String(value ?? '').replace(/[&<>\"']/g, ch => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -189,7 +186,6 @@ async function fetchUserRole() {
     if (!data?.ok || !data.user) throw new Error(data?.error || 'تعذر التحقق من الحساب');
     userRole = ['owner', 'admin', 'moderator', 'user'].includes(data.user.role) ? data.user.role : 'user';
     userInfo = data.user;
-    console.info('DAYO account verified:', { id: data.user.id, role: data.user.role });
     if (nav1Initialized) initNav1();
     await Promise.allSettled([
       loadStoreData(), loadSlider(), loadDynamicSections(), loadCategories(), loadBadges(),
@@ -246,7 +242,6 @@ document.querySelectorAll('.truck-button').forEach(button => {
   });
 });
 
-/* ====== أيقونات ====== */
 const icons = {
   home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/>',
   heart:'<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/>',
@@ -257,7 +252,6 @@ const icons = {
 };
 const svg=(name,size=24,stroke=2)=>`<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">${icons[name]}</svg>`;
 
-/* ====== معالجة الروابط (بدون تغيير hash) ====== */
 function extractHash(link) {
   if (!link) return '';
   const idx = link.indexOf('#');
@@ -287,7 +281,6 @@ function handleInternalLink(link) {
   if (el) el.scrollIntoView({ behavior: 'smooth' });
 }
 
-/* ✅ نسخ رابط أي صفحة */
 function copyPageLink(hash) {
   const internalLink = hash || '#home';
   navigator.clipboard.writeText(internalLink).then(() => {
@@ -304,7 +297,6 @@ function copyCurrentProductLink() {
   if (hash.startsWith('#product-')) copyPageLink(hash);
 }
 
-/* ====== الشريط السفلي (بدون تغيير hash) ====== */
 function initNav1() {
   const nav1 = document.getElementById('nav1');
   if (!nav1) return;
@@ -353,7 +345,6 @@ function initNav1() {
   nav1Initialized = true;
 }
 
-/* ====== بيانات المتجر ====== */
 async function loadStoreData() {
   const data = await apiCall('/api/store');
   if (data.ok && data.store) {
@@ -410,7 +401,6 @@ async function handleLogoUpload(input) {
   } catch (err) { alert('حدث خطأ'); }
 }
 
-/* ====== الإحصائيات الحقيقية ====== */
 async function loadRealStats() {
   const res = await apiCall('/api/stats');
   if (res.ok && res.stats) {
@@ -424,7 +414,6 @@ async function loadRealStats() {
   }
 }
 
-/* ====== البانر الكبير ====== */
 async function loadSlider() {
   const data = await apiCall('/api/slider');
   if (data.ok && data.slides) renderHeroSlider(data.slides);
@@ -525,7 +514,6 @@ async function deleteSlide(id) {
   if(res.ok) { loadSlider(); openAdminPanel(); } else alert(res.error);
 }
 
-/* ====== ضغط الصور ====== */
 function compressImage(file, maxWidth = 400, maxHeight = 400) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -561,7 +549,6 @@ async function handleImageUpload(input, previewId) {
   } catch (err) { alert('حدث خطأ'); }
 }
 
-/* ====== الأيقونات المربعة ====== */
 async function loadQuickIcons() {
   const res = await apiCall('/api/quick-icons');
   if (res.ok && Array.isArray(res.icons)) {
@@ -589,7 +576,6 @@ function renderQuickIcons() {
   });
 }
 
-/* ====== الأقسام الديناميكية ====== */
 async function loadDynamicSections() {
   const data = await apiCall('/api/sections');
   if (data.ok && Array.isArray(data.sections)) {
@@ -681,9 +667,7 @@ function renderDynamicSections() {
     container.appendChild(el);
   });
 }
-/* ============================================================
-   ✅ وصل حديثاً + الأكثر مبيعاً
-   ============================================================ */
+
 async function loadHomeProducts() {
   const res = await apiCall('/api/products');
   if (!res.ok || !Array.isArray(res.products)) return;
@@ -729,9 +713,6 @@ function renderHScrollProducts(containerId, products) {
   });
 }
 
-/* ============================================================
-   التصنيفات
-   ============================================================ */
 async function loadCategories() {
   const res = await apiCall('/api/categories');
   if (res.ok && Array.isArray(res.categories)) currentCategories = res.categories;
@@ -899,9 +880,6 @@ async function deleteCategory(id) {
   } else tg.showAlert(res.error);
 }
 
-/* ============================================================
-   إدارة الأيقونات المربعة
-   ============================================================ */
 let editingQuickIconIndex = -1;
 let quickIconsBuffer = [];
 
@@ -1003,9 +981,6 @@ async function moveQuickIcon(i, dir) {
   renderQuickIconsAdminList();
 }
 
-/* ============================================================
-   إدارة زر CTA
-   ============================================================ */
 function renderHeroButtonAdmin() {
   return `
     <hr style="border-color:#333;margin:20px 0;">
@@ -1034,9 +1009,6 @@ async function saveHeroButton() {
   } else tg.showAlert(res.error);
 }
 
-/* ============================================================
-   إدارة الأقسام
-   ============================================================ */
 function renderSectionsAdmin() {
   let listHTML = '';
   const sorted = [...dynamicSections].sort((a,b) => (a.order||0)-(b.order||0));
@@ -1260,9 +1232,6 @@ async function moveSection(id, direction) {
   else tg.showAlert(res.error);
 }
 
-/* ============================================================
-   لوحة التحكم
-   ============================================================ */
 async function openAdminPanel() {
   safeRemoveActive('page-home');
   safeRemoveActive('page-nav');
@@ -1395,7 +1364,7 @@ async function openAdminPanel() {
         </select>
       </div>
       <input type="number" id="new-prod-discount" placeholder="نسبة الخصم %" style="width:100%;padding:8px;margin-bottom:8px;border-radius:5px;border:none;" min="0" max="99">
-            <button onclick="addProduct()" id="submit-btn" style="background:#6A0DAD;color:white;padding:12px;width:100%;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">إضافة المنتج</button>
+      <button onclick="addProduct()" id="submit-btn" style="background:#6A0DAD;color:white;padding:12px;width:100%;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">إضافة المنتج</button>
       <button id="cancel-edit-btn" onclick="openAdminPanel()" style="display:none;background:#e74c3c;color:white;padding:12px;width:100%;border:none;border-radius:5px;cursor:pointer;font-weight:bold;margin-top:8px;">إلغاء التعديل</button>
     </div>
     <h3 style="color:white;">المنتجات المضافة</h3>
@@ -1460,7 +1429,6 @@ async function openAdminPanel() {
   currentSliderImage = "";
 }
 
-/* ====== طرق الدفع الخاصة بكل منتج ====== */
 function updateProductPaymentControls() {
   const type = document.getElementById('new-prod-type')?.value || 'digital';
   const boxes = [...document.querySelectorAll('input[name="prod-payment-method"]')];
@@ -1475,7 +1443,6 @@ function selectedProductPaymentMethods() {
   return [...document.querySelectorAll('input[name="prod-payment-method"]:checked')].map(box => box.value);
 }
 
-/* ====== المنتجات ====== */
 async function addProduct() {
   const name = document.getElementById('new-prod-name').value;
   const description = document.getElementById('new-prod-desc').value;
@@ -1588,9 +1555,6 @@ async function saveMenuLinks() {
   else tg.showAlert(res.error);
 }
 
-/* ============================================================
-   صفحة المتجر (بدون تغيير hash)
-   ============================================================ */
 async function openShop(categoryId = null) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-shop').classList.add('active');
@@ -1723,9 +1687,6 @@ function formatPrices(prices) {
   return parts.join(' | ');
 }
 
-/* ============================================================
-   صفحة المنتج (بدون تغيير hash)
-   ============================================================ */
 async function openProduct(productId) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-product').classList.add('active');
@@ -1930,7 +1891,6 @@ async function submitCartOrder() {
   }
 }
 
-
 async function startTonConnectPayment(orderId) {
   try {
     const ui = initTonConnect();
@@ -1969,14 +1929,6 @@ async function startTonConnectPayment(orderId) {
   }
 }
 
-function openCryptoInvoice(encodedUrl) {
-  let url = ''; try { url = decodeURIComponent(encodedUrl); } catch (_) { url = encodedUrl; }
-  if (!url) return showMessage('رابط فاتورة الدفع غير متوفر.');
-  if (tg?.openTelegramLink && /^https:\/\/t\.me\//i.test(url)) tg.openTelegramLink(url);
-  else if (tg?.openLink) tg.openLink(url);
-  else window.open(url, '_blank', 'noopener');
-}
-
 function openTelegramInvoice(encodedUrl) {
   let url = '';
   try { url = decodeURIComponent(encodedUrl); } catch (_) { url = encodedUrl; }
@@ -2008,7 +1960,6 @@ async function submitOrderPaymentReference(orderId) {
   else showMessage(response.error || 'تعذر إرسال المرجع.');
 }
 
-/* ===== مركز إشعارات DAYO والقائمة الجانبية ===== */
 function openSideMenu() {
   const overlay = document.getElementById('dayo-menu-overlay');
   const drawer = document.getElementById('dayo-side-drawer');
@@ -2107,6 +2058,9 @@ async function openMyOrders() {
   } catch (error) { page.innerHTML = `<div class="dayo-page-head"><h2>طلباتي</h2></div><p class="dayo-warning">${escapeHTML(error.message)}</p>`; }
 }
 
+/* ============================================================
+   إعدادات الدفع (بدون Crypto Pay)
+   ============================================================ */
 function renderPaymentSettingsAdmin(settings = {}) {
   const safeBase = escapeHTML(settings.publicBaseUrl || '');
   return `<hr style="border-color:#333;margin:20px 0;"><section class="admin-form" id="dayo-payment-settings"><h3>إعدادات الدفع والتحصيل</h3>
@@ -2114,23 +2068,30 @@ function renderPaymentSettingsAdmin(settings = {}) {
     <label><input id="pay-manual-enabled" type="checkbox" ${settings.manualEnabled !== false ? 'checked' : ''}> تفعيل الدفع اليدوي بالريال</label>
     <label>يوزر حساب استقبال الدفع</label><input id="pay-manual-username" type="text" value="${escapeHTML(settings.manualPaymentUsername || '')}" placeholder="مثال: DAYO_PAY">
     <label>تعليمات التحويل (اختياري)</label><textarea id="pay-manual-instructions" rows="3" placeholder="اكتب تعليمات التحويل ورقم الطلب">${escapeHTML(settings.manualInstructions || '')}</textarea>
-    <hr style="border-color:#333;margin:16px 0;"><h4>الدفع المباشر – TON Connect</h4>
+    
+    <hr style="border-color:#333;margin:16px 0;">
+    <h4>الدفع المباشر – TON Connect</h4>
     <label><input id="pay-tonconnect-enabled" type="checkbox" ${settings.tonConnectEnabled ? 'checked' : ''}> تفعيل الدفع عبر TON Connect</label>
-    <label>عنوان محفظة استقبال TON وUSDT</label><input id="pay-ton-receiver-address" type="text" dir="ltr" value="${escapeHTML(settings.tonReceiverAddress || '')}" placeholder="ألصق عنوان محفظة TON هنا"><small class="dayo-muted">يُحفظ العنوان في قاعدة البيانات من لوحة التحكم. تغييره متاح للمالك فقط. ${settings.tonConnectReady ? 'التحقق الآلي جاهز.' : 'تأكد من إضافة TONCENTER_API_KEY إلى Render.'}</small>
-    <hr style="border-color:#333;margin:16px 0;"><h4>إعداد Crypto Pay القديم (غير مستخدم لطلبات TON الجديدة)</h4>
-    <label><input id="pay-crypto-enabled" type="checkbox" ${settings.cryptoEnabled ? 'checked' : ''}> تفعيل الدفع التلقائي بالعملات الرقمية</label>
     <label><input id="pay-crypto-ton-enabled" type="checkbox" ${settings.cryptoTonEnabled !== false ? 'checked' : ''}> قبول TON</label>
     <label><input id="pay-crypto-usdt-enabled" type="checkbox" ${settings.cryptoUsdtEnabled !== false ? 'checked' : ''}> قبول USDT على شبكة TON</label>
-    <label><input id="pay-crypto-webhook-configured" type="checkbox" ${settings.cryptoWebhookConfigured ? 'checked' : ''}> أكدت أنني ضبطت Webhook داخل تطبيق @CryptoBot</label>
-    <label>Crypto Pay API Token</label><input id="pay-crypto-token" type="password" autocomplete="new-password" placeholder="${settings.cryptoTokenConfigured ? 'مفتاح محفوظ؛ اكتب قيمة جديدة للاستبدال' : 'ألصق API Token من CryptoBot'}">
-    <small class="dayo-muted">${settings.cryptoTokenConfigured ? 'يوجد مفتاح محفوظ ومشفّر على الخادم.' : 'لم يتم إعداد مفتاح Crypto Pay بعد.'} لن يظهر المفتاح المحفوظ في لوحة التحكم.</small>
-    <label>رابط المتجر العام HTTPS</label><input id="pay-public-base-url" type="url" value="${safeBase}" placeholder="https://your-domain.com">
-    <button type="button" class="dayo-secondary" onclick="testCryptoPaymentConnection()">اختبار اتصال Crypto Pay</button>
-    <div class="dayo-payment-note"><strong>رابط Webhook الخاص بـ Crypto Pay</strong><p id="pay-crypto-webhook-url">${escapeHTML(settings.cryptoWebhookUrl || 'سيظهر بعد إدخال رابط المتجر وحفظ الإعدادات')}</p><button type="button" class="dayo-secondary" onclick="copyPaymentWebhook('crypto')">نسخ رابط Webhook</button><small>يجب وضع هذا الرابط في إعدادات تطبيقك داخل @CryptoBot؛ لا يمكن للخادم ضبط إعدادات تطبيق Crypto Pay نيابةً عنك.</small></div>
-    <hr style="border-color:#333;margin:16px 0;"><h4>Telegram Stars</h4>
+    <label>عنوان محفظة استقبال TON وUSDT</label>
+    <input id="pay-ton-receiver-address" type="text" dir="ltr" value="${escapeHTML(settings.tonReceiverAddress || '')}" placeholder="ألصق عنوان محفظة TON هنا">
+    <small class="dayo-muted">يُحفظ العنوان في قاعدة البيانات من لوحة التحكم. تغييره متاح للمالك فقط. ${settings.tonConnectReady ? 'التحقق الآلي جاهز.' : 'تأكد من إضافة TONCENTER_API_KEY إلى Render.'}</small>
+    
+    <hr style="border-color:#333;margin:16px 0;">
+    <h4>Telegram Stars</h4>
     <label><input id="pay-stars-enabled" type="checkbox" ${settings.starsEnabled ? 'checked' : ''}> تفعيل الدفع عبر Telegram Stars</label>
-    <div class="dayo-payment-note"><strong>Webhook تيليجرام</strong><p>${settings.telegramWebhookReady ? 'تم إنشاء إعدادات Webhook.' : 'سيتم إنشاء سر Webhook تلقائيًا عند حفظ الإعدادات.'}</p><p id="pay-telegram-webhook-url">${escapeHTML(settings.telegramWebhookUrl || 'سيظهر بعد إدخال رابط المتجر وحفظ الإعدادات')}</p><button type="button" class="dayo-secondary" onclick="copyPaymentWebhook('telegram')">نسخ رابط Webhook</button><button type="button" class="dayo-primary" onclick="setupStarsWebhook()">ربط Telegram Stars الآن</button><small>لن يتم استبدال Webhook آخر موجود للبوت؛ إذا كان البوت مربوطًا بنظام آخر سنوقف العملية وننبهك.</small></div>
-    <p style="font-size:11px;color:#a0c4ff;line-height:1.7">تُحفظ مفاتيح الدفع مشفّرة في قاعدة البيانات ولا تُرسل إلى المتصفح. إعداد Crypto Pay يحتاج إضافة رابط Webhook من لوحة @CryptoBot بعد الحفظ.</p>
+    <label>رابط المتجر العام HTTPS</label>
+    <input id="pay-public-base-url" type="url" value="${safeBase}" placeholder="https://your-domain.com">
+    <div class="dayo-payment-note">
+      <strong>Webhook تيليجرام</strong>
+      <p>${settings.telegramWebhookReady ? 'تم إنشاء إعدادات Webhook.' : 'سيتم إنشاء سر Webhook تلقائيًا عند حفظ الإعدادات.'}</p>
+      <p id="pay-telegram-webhook-url">${escapeHTML(settings.telegramWebhookUrl || 'سيظهر بعد إدخال رابط المتجر وحفظ الإعدادات')}</p>
+      <button type="button" class="dayo-secondary" onclick="copyPaymentWebhook('telegram')">نسخ رابط Webhook</button>
+      <button type="button" class="dayo-primary" onclick="setupStarsWebhook()">ربط Telegram Stars الآن</button>
+      <small>لن يتم استبدال Webhook آخر موجود للبوت؛ إذا كان البوت مربوطًا بنظام آخر سنوقف العملية وننبهك.</small>
+    </div>
+    <p style="font-size:11px;color:#a0c4ff;line-height:1.7">تُحفظ إعدادات الدفع مشفّرة في قاعدة البيانات.</p>
     <button class="primary" onclick="savePaymentSettings()">حفظ جميع إعدادات الدفع</button></section>`;
 }
 
@@ -2139,7 +2100,7 @@ function renderOrdersAdmin(orders = []) {
   const cards = orders.map(order => `<article class="admin-section-card" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong>${escapeHTML(order.orderCode || 'طلب')}</strong><b>${money(order.total, order.currency)}</b></div>
     <div style="font-size:12px;color:#a0c4ff;margin:7px 0">العميل: ${escapeHTML(order.customerName || 'عميل')} · ID: ${escapeHTML(order.userId || '')}</div>
     <div style="font-size:12px;color:#fff;margin-bottom:7px">${(order.items || []).map(item => `${escapeHTML(item.name)} × ${Number(item.quantity) || 1}`).join('، ')}</div>
-    <div style="font-size:12px;color:#a0c4ff;margin-bottom:8px">الدفع: ${order.paymentMethod === 'manual' ? 'تحويل يدوي – SAR' : order.paymentMethod === 'cryptopay' ? (order.currency === 'ton' ? 'Crypto Pay – TON' : 'Crypto Pay – USDT على TON') : order.paymentMethod === 'tonconnect' ? (order.currency === 'ton' ? 'TON Connect – TON' : 'TON Connect – USDT') : order.paymentMethod === 'stars' ? 'Telegram Stars' : 'وسيلة أخرى'} · ${order.paymentMethod === 'manual' ? (order.paymentNotified ? 'العميل أشعر بالتحويل – يلزم التحقق' : 'بانتظار التحويل') : (order.paymentStatus === 'paid' ? 'مدفوع تلقائيًا' : 'بانتظار تأكيد مزود الدفع')}</div>
+    <div style="font-size:12px;color:#a0c4ff;margin-bottom:8px">الدفع: ${order.paymentMethod === 'manual' ? 'تحويل يدوي – SAR' : order.paymentMethod === 'tonconnect' ? (order.currency === 'ton' ? 'TON Connect – TON' : 'TON Connect – USDT') : order.paymentMethod === 'stars' ? 'Telegram Stars' : 'وسيلة أخرى'} · ${order.paymentMethod === 'manual' ? (order.paymentNotified ? 'العميل أشعر بالتحويل – يلزم التحقق' : 'بانتظار التحويل') : (order.paymentStatus === 'paid' ? 'مدفوع تلقائيًا' : 'بانتظار تأكيد مزود الدفع')}</div>
     <div style="display:flex;gap:7px;flex-wrap:wrap"><select id="order-status-${escapeHTML(order.id)}" style="flex:1;min-width:150px;padding:9px;border-radius:7px">${statuses.map(([key,label]) => `<option value="${key}" ${key === order.status ? 'selected' : ''}>${label}</option>`).join('')}</select><button onclick="updateOrderStatus('${encodedArg(order.id)}')" style="background:#4A90E2;color:#fff;border:0;border-radius:7px;padding:8px 12px">حفظ الحالة</button></div>
   </article>`).join('');
   return `<hr style="border-color:#333;margin:20px 0;"><section><h3 style="color:inherit">إدارة الطلبات (${orders.length})</h3><button onclick="refreshAdminOrders()" style="background:#315d91;color:#fff;border:0;padding:8px 12px;border-radius:7px;margin-bottom:10px">تحديث الطلبات</button>${cards || '<p>لا توجد طلبات حتى الآن.</p>'}</section>`;
@@ -2151,25 +2112,15 @@ async function savePaymentSettings() {
     manualInstructions: document.getElementById('pay-manual-instructions')?.value || '',
     manualPaymentUsername: document.getElementById('pay-manual-username')?.value || '',
     tonConnectEnabled: !!document.getElementById('pay-tonconnect-enabled')?.checked,
-    tonReceiverAddress: document.getElementById('pay-ton-receiver-address')?.value || '',
-    cryptoEnabled: !!document.getElementById('pay-crypto-enabled')?.checked,
     cryptoTonEnabled: !!document.getElementById('pay-crypto-ton-enabled')?.checked,
     cryptoUsdtEnabled: !!document.getElementById('pay-crypto-usdt-enabled')?.checked,
-    cryptoWebhookConfigured: !!document.getElementById('pay-crypto-webhook-configured')?.checked,
-    cryptoPayApiToken: document.getElementById('pay-crypto-token')?.value || '',
+    tonReceiverAddress: document.getElementById('pay-ton-receiver-address')?.value || '',
     publicBaseUrl: document.getElementById('pay-public-base-url')?.value || '',
     starsEnabled: !!document.getElementById('pay-stars-enabled')?.checked
   };
   const response = await apiCall('/api/payments/settings/save', payload);
   if (response.ok) { showMessage('تم حفظ إعدادات الدفع بنجاح.'); openAdminPanel(); }
   else showMessage(response.error || 'تعذر حفظ الإعدادات.');
-}
-
-async function testCryptoPaymentConnection() {
-  const token = document.getElementById('pay-crypto-token')?.value || '';
-  const response = await apiCall('/api/payments/crypto/test', { token });
-  if (response.ok) showMessage(`الاتصال ناجح: ${response.appName || 'Crypto Pay'}`);
-  else showMessage(response.error || 'فشل اختبار الاتصال.');
 }
 
 async function copyPaymentWebhook(kind) {
@@ -2246,12 +2197,8 @@ function showEmptyPage(title, icon, message) {
 }
 
 function openFavorites() { showEmptyPage('المفضلة', '❤️', 'لا توجد منتجات في المفضلة بعد'); }
-// openCart is implemented above as the full shopping-cart and checkout flow.
 function openSupport() { showEmptyPage('الدعم الفني', '🎧', 'تواصل معنا عبر تيليجرام أو البريد'); }
 
-/* ============================================================
-   إغلاق لوحة التحكم + العودة
-   ============================================================ */
 const closeAdminBtn = document.getElementById('close-admin');
 if (closeAdminBtn) {
   closeAdminBtn.addEventListener('click', () => {
@@ -2266,7 +2213,6 @@ function returnToNav() {
   safeAddActive('page-nav');
 }
 
-// تهيئة التطبيق والتحقق من هوية المستخدم عند تحميل الصفحة.
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', fetchUserRole, { once: true });
 } else {
