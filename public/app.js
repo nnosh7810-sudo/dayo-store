@@ -2180,7 +2180,11 @@ function renderPaymentSettingsAdmin(settings = {}, role = userRole) {
     <label><input id="pay-ton-enabled" type="checkbox" ${settings.tonEnabled !== false ? 'checked' : ''}> قبول الدفع بعملة TON</label>
     <label><input id="pay-usdt-enabled" type="checkbox" ${settings.usdtEnabled !== false ? 'checked' : ''}> قبول الدفع بعملة USDT على شبكة TON</label>
     <label>عنوان محفظة الاستقبال</label>${walletField}
-    <small class="dayo-muted">${isOwner ? 'يمكنك تعديل عنوان محفظة الاستقبال بصفتك المالك.' : 'عرض فقط: تغيير عنوان محفظة الاستقبال متاح للمالك وحده.'} ${settings.tonConnectReady ? 'التحقق الآلي جاهز.' : 'تأكد من إضافة TONCENTER_API_KEY إلى Render.'}</small>
+    <small class="dayo-muted">${isOwner ? 'يمكنك تعديل عنوان محفظة الاستقبال بصفتك المالك.' : 'عرض فقط: تغيير عنوان محفظة الاستقبال متاح للمالك وحده.'}</small>
+    <hr style="border-color:#333;margin:16px 0;"><h4>إعدادات شبكة TON – للمالك فقط</h4>
+    ${isOwner ? `<label>مفتاح TON Center API</label><input id="pay-toncenter-api-key" type="password" dir="ltr" autocomplete="new-password" placeholder="${settings.toncenterApiKeyConfigured ? 'يوجد مفتاح محفوظ؛ اكتب قيمة جديدة للاستبدال' : 'ألصق مفتاح TON Center هنا'}"><small class="dayo-muted">${settings.toncenterApiKeyConfigured ? 'يوجد مفتاح محفوظ ومشفّر. اترك الحقل فارغًا للاحتفاظ به.' : 'لم تتم إضافة مفتاح بعد.'}</small><label><input id="pay-toncenter-clear" type="checkbox"> حذف مفتاح TON Center المحفوظ</label>
+    <label>عنوان عقد USDT (Jetton Master) على شبكة TON</label><input id="pay-ton-usdt-master" type="text" dir="ltr" value="${escapeHTML(settings.tonUsdtMasterAddress || '')}" placeholder="عنوان عقد USDT الرسمي على TON">` : `<label>مفتاح TON Center API</label><input type="text" value="${settings.toncenterApiKeyConfigured ? 'مفتاح محفوظ' : 'غير مضبوط'}" readonly><small class="dayo-muted">إضافة أو تغيير المفتاح وعقد USDT متاح للمالك فقط.</small><label>عنوان عقد USDT (Jetton Master)</label><input type="text" dir="ltr" value="${escapeHTML(settings.tonUsdtMasterAddress || '')}" readonly>`}
+    <small class="dayo-muted">يُحفظ مفتاح API مشفّرًا في قاعدة البيانات ولا يُرسل إلى المتصفح. يمكن إدارة المفتاح وعنوان العقد من هذه اللوحة دون إضافتهما إلى Render Environment.</small>
     <hr style="border-color:#333;margin:16px 0;"><h4>الدفع اليدوي – الريال السعودي</h4>
     <label><input id="pay-manual-enabled" type="checkbox" ${settings.manualEnabled !== false ? 'checked' : ''}> تفعيل الدفع اليدوي بالريال</label>
     <label>يوزر حساب استقبال الدفع</label><input id="pay-manual-username" type="text" value="${escapeHTML(settings.manualPaymentUsername || '')}" placeholder="مثال: DAYO_PAY">
@@ -2212,6 +2216,9 @@ async function savePaymentSettings() {
     tonEnabled: !!document.getElementById('pay-ton-enabled')?.checked,
     usdtEnabled: !!document.getElementById('pay-usdt-enabled')?.checked,
     tonReceiverAddress: document.getElementById('pay-ton-receiver-address')?.value || '',
+    toncenterApiKey: userRole === 'owner' ? (document.getElementById('pay-toncenter-api-key')?.value || '') : undefined,
+    clearToncenterApiKey: userRole === 'owner' ? !!document.getElementById('pay-toncenter-clear')?.checked : undefined,
+    tonUsdtMasterAddress: userRole === 'owner' ? (document.getElementById('pay-ton-usdt-master')?.value || '') : undefined,
     publicBaseUrl: document.getElementById('pay-public-base-url')?.value || '',
     starsEnabled: !!document.getElementById('pay-stars-enabled')?.checked
   };
