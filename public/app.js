@@ -2164,8 +2164,33 @@ async function openMyOrders() {
         <div class="dayo-order-lines">${(order.items || []).map(item => `<div>${escapeHTML(item.name)} × ${Number(item.quantity) || 1}</div>`).join('')}</div>
         <div class="dayo-total-row"><span>${escapeHTML(currencyLabel(order.currency))}</span><strong>${money(order.total, order.currency)}</strong></div>
         <small class="dayo-muted">${order.createdAt ? new Date(order.createdAt).toLocaleString('ar-SA') : ''}</small>
+        ${order.paymentMethod === 'tonconnect' && order.status === 'awaiting_payment' && order.tonWalletSubmittedAt ? `<button class="dayo-secondary" type="button" onclick="retryTonOrderVerification('${encodedArg(order.id)}')">إعادة التحقق من دفع TON / USDT</button>` : ''}
       </article>`).join('')}</div>` : '<div class="dayo-empty-cart"><div>🧾</div><h3>لا توجد طلبات حتى الآن</h3><p>عند إتمام أول عملية شراء ستظهر تفاصيلها هنا.</p><button class="dayo-primary" onclick="openShop()">تصفح المتجر</button></div>'}`;
   } catch (error) { page.innerHTML = `<div class="dayo-page-head"><h2>طلباتي</h2></div><p class="dayo-warning">${escapeHTML(error.message)}</p>`; }
+}
+
+async function retryTonOrderVerification(encodedOrderId) {
+  let orderId = encodedOrderId;
+  try { orderId = decodeURIComponent(encodedOrderId); } catch (_) {}
+  showMessage('جارٍ إعادة التحقق من التحويل على شبكة TON...');
+  try {
+    let lastMessage = 'لم يظهر التحويل المؤكد بعد. تأكد من مرور وقت كافٍ ثم أعد المحاولة.';
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const checked = await apiCall('/api/ton/verify', { orderId });
+      if (!checked.ok) throw new Error(checked.error || 'تعذر التحقق من الدفع');
+      if (checked.paid) {
+        showMessage('تم تأكيد الدفع بنجاح.');
+        await openMyOrders();
+        return;
+      }
+      lastMessage = checked.message || lastMessage;
+      if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+    showMessage(lastMessage);
+    await openMyOrders();
+  } catch (error) {
+    showMessage(error.message || 'تعذر إعادة التحقق من الدفع.');
+  }
 }
 
 function renderPaymentSettingsAdmin(settings = {}, role = userRole) {
