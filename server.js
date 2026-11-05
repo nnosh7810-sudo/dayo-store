@@ -167,25 +167,56 @@ async function verifyTonConnectOrder(order) {
 
   if (order.currency === 'usd') {
     const recipientJettonWallet = await getJettonWalletAddress(receiver.toString({ urlSafe: true, bounceable: true }));
+    const senderJettonWallet = await getJettonWalletAddress(expectedSender);
     const expectedAmount = BigInt(decimalToUnits(order.total, 6));
+
+    // المسار الأول: إشعار Jetton الذي يصل إلى محفظة TON الخاصة بالمستلم.
     for (const tx of transactions) {
       if (!transactionIsSuccessful(tx) || !tx.inMessage) continue;
       const info = tx.inMessage.info;
       if (info.type !== 'internal' || info.bounced === true || info.dest.toRawString().toLowerCase() !== receiver.toRawString().toLowerCase()) continue;
       if (info.src.toRawString().toLowerCase() !== recipientJettonWallet.toRawString().toLowerCase()) continue;
       if (Number(tx.now || 0) < since) continue;
-      const slice = tx.inMessage.body.beginParse();
-      if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x7362d09c) continue; // transfer_notification
-      slice.loadUintBig(64); // query_id
-      const amount = slice.loadCoins();
-      const sender = slice.loadAddress();
-      const hasRef = slice.loadBit();
-      const forwardPayload = hasRef ? slice.loadRef() : slice.asCell();
-      if (sender.toRawString().toLowerCase() !== expectedSender) continue;
-      if (BigInt(amount) !== expectedAmount) continue;
-      if (cellComment(forwardPayload) !== order.orderCode) continue;
-      if (tx.outMessages && tx.outMessages.size > 0) continue;
-      return { paid: true, reference: txHashHex(tx) };
+      try {
+        const slice = tx.inMessage.body.beginParse();
+        if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x7362d09c) continue; // transfer_notification
+        slice.loadUintBig(64); // query_id
+        const amount = slice.loadCoins();
+        const sender = slice.loadAddress();
+        const hasRef = slice.loadBit();
+        const forwardPayload = hasRef ? slice.loadRef() : slice.asCell();
+        if (sender.toRawString().toLowerCase() !== expectedSender) continue;
+        if (BigInt(amount) !== expectedAmount) continue;
+        if (cellComment(forwardPayload) !== order.orderCode) continue;
+        return { paid: true, reference: txHashHex(tx) };
+      } catch (_) { continue; }
+    }
+
+    // المسار الثاني: افحص معاملة internal_transfer داخل Jetton Wallet المستلم مباشرة.
+    // هذا يستعيد المدفوعات القديمة حتى لو لم يصل transfer_notification إلى محفظة TON.
+    const jettonWalletTransactions = await client.getTransactions(recipientJettonWallet, { limit: 100 });
+    for (const tx of jettonWalletTransactions) {
+      if (!transactionIsSuccessful(tx) || !tx.inMessage) continue;
+      const info = tx.inMessage.info;
+      if (info.type !== 'internal' || info.bounced === true) continue;
+      if (info.dest.toRawString().toLowerCase() !== recipientJettonWallet.toRawString().toLowerCase()) continue;
+      if (info.src.toRawString().toLowerCase() !== senderJettonWallet.toRawString().toLowerCase()) continue;
+      if (Number(tx.now || 0) < since) continue;
+      try {
+        const slice = tx.inMessage.body.beginParse();
+        if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x178d4519) continue; // internal_transfer
+        slice.loadUintBig(64); // query_id
+        const amount = slice.loadCoins();
+        const sender = slice.loadAddress();
+        slice.loadAddress(); // response_address
+        slice.loadCoins(); // forward_ton_amount
+        const hasRef = slice.loadBit();
+        const forwardPayload = hasRef ? slice.loadRef() : slice.asCell();
+        if (sender.toRawString().toLowerCase() !== expectedSender) continue;
+        if (BigInt(amount) !== expectedAmount) continue;
+        if (cellComment(forwardPayload) !== order.orderCode) continue;
+        return { paid: true, reference: txHashHex(tx) };
+      } catch (_) { continue; }
     }
     return { paid: false };
   }
@@ -1304,7 +1335,7 @@ app.post('/api/ton/prepare', async (req, res) => {
         .storeAddress(receiverAddress)
         .storeAddress(sender)
         .storeBit(0)
-        .storeCoins(1n)
+        .storeCoins(10000000n) // 0.01 TON لتغطية إشعار التحويل
         .storeBit(1)
         .storeRef(forwardPayload)
         .endCell();
