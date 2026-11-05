@@ -50,7 +50,6 @@ const client = new MongoClient(MONGODB_URI, {
 let db;
 
 // Payment provider credentials entered from the dashboard are encrypted at rest.
-// The encryption key is derived from the server-side BOT_TOKEN and never sent to clients.
 function paymentEncryptionKey() {
   return crypto.createHash('sha256').update(`${BOT_TOKEN}:DAYO_PAYMENT_SETTINGS_V1`).digest();
 }
@@ -88,8 +87,6 @@ async function getPublicBaseUrl() {
   const saved = await getPaymentConfigRaw();
   return String(saved.publicBaseUrl || ENV_PUBLIC_BASE_URL || '').replace(/\/$/, '');
 }
-
-
 async function getTonApiKey() {
   const saved = await getPaymentConfigRaw();
   return decryptPaymentSecret(saved.toncenterApiKeyEnc) || ENV_TONCENTER_API_KEY;
@@ -97,7 +94,7 @@ async function getTonApiKey() {
 async function getTonUsdtMasterAddress() {
   const saved = await getPaymentConfigRaw();
   return String(saved.tonUsdtMasterAddress || ENV_TON_USDT_MASTER_ADDRESS || DEFAULT_TON_USDT_MASTER_ADDRESS).trim();
-}
+} 
 async function getTonClient() {
   const apiKey = await getTonApiKey();
   if (!apiKey) throw new Error('أضف مفتاح TON Center من لوحة تحكم DAYO > الدفع والتحصيل');
@@ -129,7 +126,7 @@ async function getJettonWalletAddress(ownerAddress) {
 function cellComment(cell) {
   try {
     const slice = cell.beginParse();
-    if (slice.remainingBits < 32 || slice.loadUint(32) !== 0) return '';
+    if (slicereamingBits < 32 || slice.loadUint(32) !== 0) return '';
     return slice.loadStringTail();
   } catch (_) { return ''; }
 }
@@ -170,7 +167,6 @@ async function verifyTonConnectOrder(order) {
     const senderJettonWallet = await getJettonWalletAddress(expectedSender);
     const expectedAmount = BigInt(decimalToUnits(order.total, 6));
 
-    // المسار الأول: إشعار Jetton الذي يصل إلى محفظة TON الخاصة بالمستلم.
     for (const tx of transactions) {
       if (!transactionIsSuccessful(tx) || !tx.inMessage) continue;
       const info = tx.inMessage.info;
@@ -179,8 +175,8 @@ async function verifyTonConnectOrder(order) {
       if (Number(tx.now || 0) < since) continue;
       try {
         const slice = tx.inMessage.body.beginParse();
-        if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x7362d09c) continue; // transfer_notification
-        slice.loadUintBig(64); // query_id
+        if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x7362d09c) continue;
+        slice.loadUintBig(64);
         const amount = slice.loadCoins();
         const sender = slice.loadAddress();
         const hasRef = slice.loadBit();
@@ -192,8 +188,6 @@ async function verifyTonConnectOrder(order) {
       } catch (_) { continue; }
     }
 
-    // المسار الثاني: افحص معاملة internal_transfer داخل Jetton Wallet المستلم مباشرة.
-    // هذا يستعيد المدفوعات القديمة حتى لو لم يصل transfer_notification إلى محفظة TON.
     const jettonWalletTransactions = await client.getTransactions(recipientJettonWallet, { limit: 100 });
     for (const tx of jettonWalletTransactions) {
       if (!transactionIsSuccessful(tx) || !tx.inMessage) continue;
@@ -204,12 +198,12 @@ async function verifyTonConnectOrder(order) {
       if (Number(tx.now || 0) < since) continue;
       try {
         const slice = tx.inMessage.body.beginParse();
-        if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x178d4519) continue; // internal_transfer
-        slice.loadUintBig(64); // query_id
+        if (slice.remainingBits < 32 || slice.loadUint(32) !== 0x178d4519) continue;
+        slice.loadUintBig(64);
         const amount = slice.loadCoins();
         const sender = slice.loadAddress();
-        slice.loadAddress(); // response_address
-        slice.loadCoins(); // forward_ton_amount
+        slice.loadAddress();
+        slice.loadCoins();
         const hasRef = slice.loadBit();
         const forwardPayload = hasRef ? slice.loadRef() : slice.asCell();
         if (sender.toRawString().toLowerCase() !== expectedSender) continue;
@@ -227,7 +221,6 @@ async function connectDB() {
   try {
     await client.connect();
     db = client.db('dayoStore');
-    // Remove obsolete Crypto Pay credentials and flags from active store settings.
     await db.collection('store').updateOne(
       { _id: 'main' },
       { $unset: {
@@ -268,11 +261,9 @@ async function connectDB() {
     if (!await db.collection('slider').findOne({ _id: 'main' })) {
       await db.collection('slider').insertOne({ _id: 'main', slides: [] });
     }
-
     if (!await db.collection('sections').findOne({ _id: 'main' })) {
       await db.collection('sections').insertOne({ _id: 'main', list: [] });
     }
-
     if (!await db.collection('categories').findOne({ _id: 'main' })) {
       await db.collection('categories').insertOne({
         _id: 'main',
@@ -284,7 +275,6 @@ async function connectDB() {
         ]
       });
     }
-
     if (!await db.collection('badges').findOne({ _id: 'main' })) {
       await db.collection('badges').insertOne({
         _id: 'main',
@@ -294,8 +284,6 @@ async function connectDB() {
         ]
       });
     }
-
-    // ✅ الأيقونات المربعة
     if (!await db.collection('quickIcons').findOne({ _id: 'main' })) {
       await db.collection('quickIcons').insertOne({
         _id: 'main',
@@ -307,7 +295,6 @@ async function connectDB() {
         ]
       });
     }
-
   } catch (err) {
     console.error('❌ فشل تهيئة قاعدة البيانات:', err);
     throw err;
@@ -318,27 +305,17 @@ async function connectDB() {
    دوال مساعدة
    ========================================================= */
 function verifyTelegramData(initData, botToken) {
-  if (typeof initData !== 'string' || !initData.trim()) {
-    throw new Error('بيانات تيليجرام مفقودة');
-  }
-
+  if (typeof initData !== 'string' || !initData.trim()) throw new Error('بيانات تيليجرام مفقودة');
   const urlParams = new URLSearchParams(initData);
   const hash = urlParams.get('hash');
   const authDate = Number(urlParams.get('auth_date'));
   const userJson = urlParams.get('user');
 
-  if (!hash || !/^[a-f0-9]{64}$/i.test(hash)) {
-    throw new Error('توقيع تيليجرام مفقود أو غير صالح');
-  }
-  if (!Number.isFinite(authDate) || !userJson) {
-    throw new Error('بيانات جلسة تيليجرام غير مكتملة');
-  }
+  if (!hash || !/^[a-f0-9]{64}$/i.test(hash)) throw new Error('توقيع تيليجرام مفقود أو غير صالح');
+  if (!Number.isFinite(authDate) || !userJson) throw new Error('بيانات جلسة تيليجرام غير مكتملة');
 
-  // رفض بيانات تسجيل الدخول الأقدم من 24 ساعة أو المؤرخة في المستقبل.
   const nowSeconds = Math.floor(Date.now() / 1000);
-  if (authDate > nowSeconds + 30 || nowSeconds - authDate > 86400) {
-    throw new Error('انتهت صلاحية جلسة تيليجرام، أعد فتح المتجر');
-  }
+  if (authDate > nowSeconds + 30 || nowSeconds - authDate > 86400) throw new Error('انتهت صلاحية جلسة تيليجرام، أعد فتح المتجر');
 
   urlParams.delete('hash');
   const dataCheckString = Array.from(urlParams.entries())
@@ -350,17 +327,12 @@ function verifyTelegramData(initData, botToken) {
   const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest();
   const receivedHash = Buffer.from(hash, 'hex');
 
-  if (receivedHash.length !== calculatedHash.length ||
-      !crypto.timingSafeEqual(calculatedHash, receivedHash)) {
+  if (receivedHash.length !== calculatedHash.length || !crypto.timingSafeEqual(calculatedHash, receivedHash)) {
     throw new Error('توقيع تيليجرام غير صالح');
   }
 
   let user;
-  try {
-    user = JSON.parse(userJson);
-  } catch {
-    throw new Error('بيانات مستخدم تيليجرام غير صالحة');
-  }
+  try { user = JSON.parse(userJson); } catch { throw new Error('بيانات مستخدم تيليجرام غير صالحة'); }
   if (!user || !user.id) throw new Error('معرف مستخدم تيليجرام مفقود');
 
   return { user };
@@ -375,39 +347,25 @@ async function getUserFromReq(req) {
   const now = new Date();
   const displayName = String(parsed.user.first_name || 'مستخدم').slice(0, 100);
 
-  // upsert ذري لتفادي تعارض أول تسجيل دخول متزامن.
   await db.collection('users').updateOne(
     { _id: userId },
-    {
-      $set: { lastSeen: now, name: displayName },
-      $setOnInsert: { role: 'user', joinedAt: now }
-    },
+    { $set: { lastSeen: now, name: displayName }, $setOnInsert: { role: 'user', joinedAt: now } },
     { upsert: true }
   );
 
   const dbUser = await db.collection('users').findOne({ _id: userId });
-  return {
-    id: userId,
-    role: dbUser?.role || 'user',
-    name: dbUser?.name || displayName
-  };
+  return { id: userId, role: dbUser?.role || 'user', name: dbUser?.name || displayName };
 }
 
-function isValidRole(role) {
-  return ['user', 'moderator', 'admin'].includes(role);
-}
+function isValidRole(role) { return ['user', 'moderator', 'admin'].includes(role); }
 
 function validatePrices(prices) {
-  if (!prices || typeof prices !== 'object' || Array.isArray(prices)) {
-    throw new Error('بيانات الأسعار غير صحيحة');
-  }
+  if (!prices || typeof prices !== 'object' || Array.isArray(prices)) throw new Error('بيانات الأسعار غير صحيحة');
   const allowed = ['usd', 'ton', 'stars', 'sar'];
   const clean = {};
   for (const key of allowed) {
     const value = prices[key] === undefined ? 0 : Number(prices[key]);
-    if (!Number.isFinite(value) || value < 0 || value > 100000000) {
-      throw new Error(`قيمة السعر ${key} غير صحيحة`);
-    }
+    if (!Number.isFinite(value) || value < 0 || value > 100000000) throw new Error(`قيمة السعر ${key} غير صحيحة`);
     clean[key] = value;
   }
   return clean;
@@ -431,7 +389,6 @@ async function saveQuickIconsList(list) {
 /* =========================================================
    المسارات (API)
    ========================================================= */
-
 app.post('/api/me', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -439,7 +396,6 @@ app.post('/api/me', async (req, res) => {
   } catch (err) { res.status(401).json({ ok: false }); }
 });
 
-// ✅ إحصائيات حقيقية
 app.post('/api/stats', async (req, res) => {
   try {
     await getUserFromReq(req);
@@ -476,40 +432,28 @@ app.post('/api/products/add', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role === 'user') throw new Error('ليس لديك صلاحية');
-
     const { name, description, image, prices, category, badge, discount } = req.body;
     const productType = req.body?.productType === 'physical' ? 'physical' : 'digital';
     const requestedMethods = Array.isArray(req.body?.paymentMethods) ? req.body.paymentMethods : ['stars'];
     const allowedMethodSet = new Set(['stars', 'ton', 'usd', 'sar']);
     const paymentMethods = productType === 'digital' ? ['stars'] : [...new Set(requestedMethods.map(v => String(v).toLowerCase()).filter(v => allowedMethodSet.has(v)))];
     if (!paymentMethods.length) throw new Error('اختر طريقة دفع واحدة على الأقل للمنتج المادي');
-    if (typeof name !== 'string' || !name.trim() || name.trim().length > 150) {
-      throw new Error('اسم المنتج مطلوب وبحد أقصى 150 حرفًا');
-    }
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 150) throw new Error('اسم المنتج مطلوب وبحد أقصى 150 حرفًا');
+    
     const cleanPrices = validatePrices(prices || {});
     const cleanDiscount = Number(discount || 0);
-    if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) {
-      throw new Error('نسبة الخصم يجب أن تكون بين 0 و100');
-    }
+    if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) throw new Error('نسبة الخصم يجب أن تكون بين 0 و100');
+    
     const id = Date.now().toString();
-    const slug = 'product-' + id;
-
     const newProduct = {
-      id, slug, link: '#' + slug,
+      id, slug: 'product-' + id, link: '#product-' + id,
       name: name.trim(),
       description: typeof description === 'string' ? description.slice(0, 5000) : 'لا يوجد وصف',
       image: typeof image === 'string' ? image : '',
-      prices: cleanPrices,
-      productType, paymentMethods,
-      category: category || 'all',
-      badge: badge || '',
-      discount: cleanDiscount,
-      soldCount: 0,
-      creatorId: user.id,
-      creatorName: user.name,
-      createdAt: new Date().toISOString()
+      prices: cleanPrices, productType, paymentMethods,
+      category: category || 'all', badge: badge || '', discount: cleanDiscount,
+      soldCount: 0, creatorId: user.id, creatorName: user.name, createdAt: new Date().toISOString()
     };
-
     await db.collection('products').insertOne(newProduct);
     res.json({ ok: true, product: newProduct, link: newProduct.link });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
@@ -519,7 +463,6 @@ app.post('/api/products/edit', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     const { productId, name, description, image, prices, category, badge, discount } = req.body;
-
     const product = await db.collection('products').findOne({ id: productId });
     if (!product) throw new Error('المنتج غير موجود');
 
@@ -529,15 +472,10 @@ app.post('/api/products/edit', async (req, res) => {
         if (typeof name !== 'string' || !name.trim() || name.trim().length > 150) throw new Error('اسم المنتج غير صحيح');
         updateData.name = name.trim();
       }
-      if (description !== undefined) {
-        if (typeof description !== 'string') throw new Error('الوصف غير صحيح');
-        updateData.description = description.slice(0, 5000);
-      }
-      if (image !== undefined) {
-        if (typeof image !== 'string') throw new Error('رابط الصورة غير صحيح');
-        updateData.image = image;
-      }
+      if (description !== undefined) updateData.description = typeof description === 'string' ? description.slice(0, 5000) : '';
+      if (image !== undefined) updateData.image = typeof image === 'string' ? image : '';
       if (prices !== undefined) updateData.prices = validatePrices(prices);
+      
       if (req.body?.productType !== undefined || req.body?.paymentMethods !== undefined) {
         const productType = req.body?.productType === 'physical' ? 'physical' : 'digital';
         const requestedMethods = Array.isArray(req.body?.paymentMethods) ? req.body.paymentMethods : (product.paymentMethods || ['stars']);
@@ -554,12 +492,9 @@ app.post('/api/products/edit', async (req, res) => {
         if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) throw new Error('نسبة الخصم يجب أن تكون بين 0 و100');
         updateData.discount = cleanDiscount;
       }
-
       await db.collection('products').updateOne({ id: productId }, { $set: updateData });
       res.json({ ok: true });
-    } else {
-      throw new Error('ليس لديك صلاحية لتعديل هذا المنتج');
-    }
+    } else { throw new Error('ليس لديك صلاحية لتعديل هذا المنتج'); }
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
@@ -567,16 +502,12 @@ app.post('/api/products/delete', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     const { productId } = req.body;
-
     const product = await db.collection('products').findOne({ id: productId });
     if (!product) throw new Error('المنتج غير موجود');
-
     if (user.role === 'owner' || user.role === 'admin' || (user.role === 'moderator' && product.creatorId === user.id)) {
       await db.collection('products').deleteOne({ id: productId });
       res.json({ ok: true });
-    } else {
-      throw new Error('ليس لديك صلاحية لحذف هذا المنتج');
-    }
+    } else { throw new Error('ليس لديك صلاحية لحذف هذا المنتج'); }
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
@@ -586,10 +517,7 @@ app.post('/api/products/increment-sold', async (req, res) => {
     if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية لتعديل عدد المبيعات');
     const { productId } = req.body;
     if (!productId) throw new Error('معرف المنتج مطلوب');
-    const result = await db.collection('products').updateOne(
-      { id: String(productId) },
-      { $inc: { soldCount: 1 } }
-    );
+    const result = await db.collection('products').updateOne({ id: String(productId) }, { $inc: { soldCount: 1 } });
     if (!result.matchedCount) throw new Error('المنتج غير موجود');
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
@@ -600,7 +528,6 @@ app.post('/api/users/promote', async (req, res) => {
     const user = await getUserFromReq(req);
     const targetId = String(req.body?.targetId || '');
     const newRole = req.body?.newRole;
-
     if (!targetId || !isValidRole(newRole)) throw new Error('بيانات الصلاحية غير صحيحة');
     if (targetId === user.id) throw new Error('لا يمكنك تغيير صلاحية حسابك من هنا');
 
@@ -613,26 +540,19 @@ app.post('/api/users/promote', async (req, res) => {
       const target = await db.collection('users').findOne({ _id: targetId });
       if (!target || !['user', 'moderator'].includes(target.role)) throw new Error('لا يمكن تعديل صلاحية هذا المستخدم');
       await db.collection('users').updateOne({ _id: targetId }, { $set: { role: 'moderator' } });
-    } else {
-      throw new Error('ليس لديك صلاحية');
-    }
+    } else { throw new Error('ليس لديك صلاحية'); }
     res.json({ ok: true });
-  } catch (err) {
-    res.status(403).json({ ok: false, error: err.message });
-  }
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
 app.post('/api/users/list', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
-
     const staffList = await db.collection('users').find({ role: { $in: ['admin', 'moderator'] } }).toArray();
     const formattedStaff = staffList.map(u => ({ id: u._id, role: u.role, name: u.name || 'مستخدم' }));
     res.json({ ok: true, staff: formattedStaff });
-  } catch (err) {
-    res.status(403).json({ ok: false, error: err.message });
-  }
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
 app.post('/api/users/update-role', async (req, res) => {
@@ -640,29 +560,20 @@ app.post('/api/users/update-role', async (req, res) => {
     const requester = await getUserFromReq(req);
     const targetId = String(req.body?.targetId || '');
     const newRole = req.body?.newRole;
-
     if (!['owner', 'admin'].includes(requester.role)) throw new Error('ليس لديك صلاحية');
-    if (!targetId || !['user', 'moderator', 'admin'].includes(newRole)) {
-      throw new Error('الصلاحية المطلوبة غير صحيحة');
-    }
+    if (!targetId || !['user', 'moderator', 'admin'].includes(newRole)) throw new Error('الصلاحية المطلوبة غير صحيحة');
     if (targetId === requester.id) throw new Error('لا يمكنك تغيير صلاحية حسابك');
 
     const targetUser = await db.collection('users').findOne({ _id: targetId });
     if (!targetUser) throw new Error('المستخدم غير موجود');
-
     if (targetUser.role === 'owner') throw new Error('لا يمكن تغيير صلاحية المالك');
     if (requester.role === 'admin') {
-      if (targetUser.role === 'admin' || newRole === 'admin') {
-        throw new Error('ليس لديك صلاحية لتعديل صلاحية مدير');
-      }
+      if (targetUser.role === 'admin' || newRole === 'admin') throw new Error('ليس لديك صلاحية لتعديل صلاحية مدير');
       if (!['user', 'moderator'].includes(newRole)) throw new Error('ليس لديك صلاحية لهذه الرتبة');
     }
-
     await db.collection('users').updateOne({ _id: targetId }, { $set: { role: newRole } });
     res.json({ ok: true });
-  } catch (err) {
-    res.status(403).json({ ok: false, error: err.message });
-  }
+  } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
 app.post('/api/store', async (req, res) => {
@@ -677,16 +588,13 @@ app.post('/api/store/update', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner') throw new Error('للمالك فقط');
-
     const { name, cover, logo } = req.body;
     const updateData = {};
     if (name) updateData.name = name;
     if (cover !== undefined) updateData.cover = cover;
     if (logo !== undefined) updateData.logo = logo;
-
     await db.collection('store').updateOne({ _id: 'main' }, { $set: updateData });
-    const store = await db.collection('store').findOne({ _id: 'main' });
-    res.json({ ok: true, store });
+    res.json({ ok: true, store: await db.collection('store').findOne({ _id: 'main' }) });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
@@ -694,31 +602,22 @@ app.post('/api/store/update-links', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner') throw new Error('للمالك فقط');
-    const { links } = req.body;
-
-    await db.collection('store').updateOne({ _id: 'main' }, { $set: { menuLinks: links } });
+    await db.collection('store').updateOne({ _id: 'main' }, { $set: { menuLinks: req.body.links } });
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// ✅ زر CTA الرئيسي
 app.post('/api/store/update-hero-button', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner') throw new Error('للمالك فقط');
-    const { text, link, color } = req.body;
-    const heroButton = {
-      text: text || 'تسوق الآن',
-      link: link || '#shop',
-      color: color || '#4A90E2'
-    };
-    await db.collection('store').updateOne({ _id: 'main' }, { $set: { heroButton } });
-    res.json({ ok: true, heroButton });
+    await db.collection('store').updateOne({ _id: 'main' }, { $set: { heroButton: { text: req.body.text || 'تسوق الآن', link: req.body.link || '#shop', color: req.body.color || '#4A90E2' } } });
+    res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
 /* =========================================================
-   السلايدر
+   السلايدر والأقسام والتصنيفات والشارات
    ========================================================= */
 app.post('/api/slider', async (req, res) => {
   try {
@@ -727,167 +626,109 @@ app.post('/api/slider', async (req, res) => {
     res.json({ ok: true, slides: slider?.slides || [] });
   } catch (err) { res.status(401).json({ ok: false }); }
 });
-
 app.post('/api/slider/add', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner') throw new Error('للمالك فقط');
-    const { image, title, btnText, btnLink } = req.body;
-    if (!image) throw new Error('يجب إضافة صورة');
-    const newSlide = { id: Date.now().toString(), image, title: title || '', btnText: btnText || '', btnLink: btnLink || '' };
+    if (!req.body.image) throw new Error('يجب إضافة صورة');
+    const newSlide = { id: Date.now().toString(), image: req.body.image, title: req.body.title || '', btnText: req.body.btnText || '', btnLink: req.body.btnLink || '' };
     await db.collection('slider').updateOne({ _id: 'main' }, { $push: { slides: newSlide } });
     res.json({ ok: true, slide: newSlide });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
-
 app.post('/api/slider/delete', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner') throw new Error('للمالك فقط');
-    const { slideId } = req.body;
-    await db.collection('slider').updateOne({ _id: 'main' }, { $pull: { slides: { id: slideId } } });
+    await db.collection('slider').updateOne({ _id: 'main' }, { $pull: { slides: { id: req.body.slideId } } });
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* =========================================================
-   الأقسام الديناميكية
-   ========================================================= */
 app.post('/api/sections', async (req, res) => {
-  try {
-    await getUserFromReq(req);
-    const sections = await getSectionsList();
-    res.json({ ok: true, sections });
-  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+  try { await getUserFromReq(req); res.json({ ok: true, sections: await getSectionsList() }); } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
-
 app.post('/api/sections/add', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
-    const { title, type, image, content, buttonText, buttonLink, items } = req.body;
-    if (!title) throw new Error('العنوان مطلوب');
-    const allowedTypes = ['grid', 'text', 'image', 'products', 'banner'];
-    if (!allowedTypes.includes(type)) throw new Error('نوع القسم غير مدعوم');
-
+    if (!req.body.title) throw new Error('العنوان مطلوب');
     const list = await getSectionsList();
-    const newSection = {
-      id: Date.now().toString(),
-      title: title || '',
-      type,
-      image: image || '',
-      content: content || '',
-      buttonText: buttonText || '',
-      buttonLink: buttonLink || '',
-      items: Array.isArray(items) ? items : [],
-      order: list.length,
-      visible: true,
-      creatorId: user.id,
-      createdAt: new Date().toISOString()
-    };
+    const newSection = { id: Date.now().toString(), title: req.body.title, type: req.body.type, image: req.body.image || '', content: req.body.content || '', buttonText: req.body.buttonText || '', buttonLink: req.body.buttonLink || '', items: Array.isArray(req.body.items) ? req.body.items : [], order: list.length, visible: true, creatorId: user.id, createdAt: new Date().toISOString() };
     list.push(newSection);
     await saveSectionsList(list);
-    res.json({ ok: true, sectionId: newSection.id, section: newSection });
+    res.json({ ok: true, section: newSection });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
-
 app.post('/api/sections/edit', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
-    const { sectionId, title, type, image, content, buttonText, buttonLink, items } = req.body;
-    if (!sectionId) throw new Error('معرف القسم مطلوب');
     const list = await getSectionsList();
-    const idx = list.findIndex(s => s.id === sectionId);
+    const idx = list.findIndex(s => s.id === req.body.sectionId);
     if (idx === -1) throw new Error('القسم غير موجود');
-    if (title !== undefined) {
-      if (typeof title !== 'string' || !title.trim() || title.length > 150) throw new Error('عنوان القسم غير صحيح');
-      list[idx].title = title.trim();
-    }
-    if (type !== undefined) {
-      if (!['grid', 'text', 'image', 'products', 'banner'].includes(type)) throw new Error('نوع القسم غير مدعوم');
-      list[idx].type = type;
-    }
-    if (image !== undefined) list[idx].image = image;
-    if (content !== undefined) list[idx].content = content;
-    if (buttonText !== undefined) list[idx].buttonText = buttonText;
-    if (buttonLink !== undefined) list[idx].buttonLink = buttonLink;
-    if (items !== undefined) list[idx].items = Array.isArray(items) ? items : [];
+    if (req.body.title !== undefined) list[idx].title = req.body.title.trim();
+    if (req.body.type !== undefined) list[idx].type = req.body.type;
+    if (req.body.image !== undefined) list[idx].image = req.body.image;
+    if (req.body.content !== undefined) list[idx].content = req.body.content;
+    if (req.body.buttonText !== undefined) list[idx].buttonText = req.body.buttonText;
+    if (req.body.buttonLink !== undefined) list[idx].buttonLink = req.body.buttonLink;
+    if (req.body.items !== undefined) list[idx].items = Array.isArray(req.body.items) ? req.body.items : [];
     await saveSectionsList(list);
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
-
 app.post('/api/sections/delete', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
-    const { sectionId } = req.body;
-    if (!sectionId) throw new Error('معرف القسم مطلوب');
     let list = await getSectionsList();
     const before = list.length;
-    list = list.filter(s => s.id !== sectionId);
+    list = list.filter(s => s.id !== req.body.sectionId);
     if (list.length === before) throw new Error('القسم غير موجود');
-    list = list.sort((a, b) => (a.order || 0) - (b.order || 0)).map((s, i) => ({ ...s, order: i }));
-    await saveSectionsList(list);
+    await saveSectionsList(list.map((s, i) => ({ ...s, order: i })));
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
-
 app.post('/api/sections/toggle', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
-    const { sectionId, visible } = req.body;
-    if (!sectionId) throw new Error('معرف القسم مطلوب');
     const list = await getSectionsList();
-    const idx = list.findIndex(s => s.id === sectionId);
+    const idx = list.findIndex(s => s.id === req.body.sectionId);
     if (idx === -1) throw new Error('القسم غير موجود');
-    list[idx].visible = !!visible;
+    list[idx].visible = !!req.body.visible;
     await saveSectionsList(list);
     res.json({ ok: true, visible: list[idx].visible });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
-
 app.post('/api/sections/reorder', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
-    const { orders } = req.body;
-    if (!Array.isArray(orders)) throw new Error('بيانات الترتيب مطلوبة');
+    if (!Array.isArray(req.body.orders)) throw new Error('بيانات الترتيب مطلوبة');
     let list = await getSectionsList();
     const orderMap = {};
-    orders.forEach(o => { orderMap[o.id] = Number(o.order) || 0; });
-    list = list.map(s => ({ ...s, order: (orderMap[s.id] !== undefined) ? orderMap[s.id] : (s.order || 0) }));
-    list = list.sort((a, b) => (a.order || 0) - (b.order || 0)).map((s, i) => ({ ...s, order: i }));
-    await saveSectionsList(list);
+    req.body.orders.forEach(o => { orderMap[o.id] = Number(o.order) || 0; });
+    await saveSectionsList(list.map(s => ({ ...s, order: (orderMap[s.id] !== undefined) ? orderMap[s.id] : (s.order || 0) })).sort((a, b) => (a.order || 0) - (b.order || 0)).map((s, i) => ({ ...s, order: i })));
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* =========================================================
-   التصنيفات
-   ========================================================= */
 app.post('/api/categories', async (req, res) => {
   try {
     await getUserFromReq(req);
     const doc = await db.collection('categories').findOne({ _id: 'main' });
-    const categories = (doc?.list || []).map(cat => ({
-      ...cat,
-      link: cat.id === 'all' ? '#shop' : `#category-${cat.id}`
-    }));
-    res.json({ ok: true, categories });
+    res.json({ ok: true, categories: (doc?.list || []).map(cat => ({ ...cat, link: cat.id === 'all' ? '#shop' : `#category-${cat.id}` })) });
   } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
-
 app.post('/api/categories/save', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
-    const { categories } = req.body;
-    if (!Array.isArray(categories) || categories.length > 100) throw new Error('قائمة التصنيفات غير صحيحة');
+    if (!Array.isArray(req.body.categories) || req.body.categories.length > 100) throw new Error('قائمة التصنيفات غير صحيحة');
     const ids = new Set();
-    const cleanCategories = categories.map((cat) => {
+    const cleanCategories = req.body.categories.map((cat) => {
       if (!cat || typeof cat !== 'object') throw new Error('بيانات تصنيف غير صحيحة');
       const id = String(cat.id || '').trim();
       const name = String(cat.name || '').trim();
@@ -901,33 +742,22 @@ app.post('/api/categories/save', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* =========================================================
-   شارات المنتجات القابلة للإدارة
-   ========================================================= */
 app.post('/api/badges', async (req, res) => {
-  try {
-    await getUserFromReq(req);
-    const doc = await db.collection('badges').findOne({ _id: 'main' });
-    res.json({ ok: true, badges: doc?.list || [] });
-  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+  try { await getUserFromReq(req); const doc = await db.collection('badges').findOne({ _id: 'main' }); res.json({ ok: true, badges: doc?.list || [] }); } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
-
 app.post('/api/badges/save', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية');
-    const { badges } = req.body;
-    if (!Array.isArray(badges) || badges.length > 40) throw new Error('قائمة الشارات غير صحيحة');
+    if (!Array.isArray(req.body.badges) || req.body.badges.length > 40) throw new Error('قائمة الشارات غير صحيحة');
     const ids = new Set();
-    const cleanBadges = badges.map((badge) => {
+    const cleanBadges = req.body.badges.map((badge) => {
       if (!badge || typeof badge !== 'object') throw new Error('بيانات شارة غير صحيحة');
       const id = String(badge.id || '').trim();
       const name = String(badge.name || '').trim();
       if (!/^[a-zA-Z0-9_-]{1,60}$/.test(id) || !name || name.length > 30 || ids.has(id)) throw new Error('اسم أو معرف الشارة غير صالح');
       ids.add(id);
-      const color = /^#[0-9a-fA-F]{6}$/.test(String(badge.color || '')) ? badge.color : '#4A90E2';
-      const textColor = /^#[0-9a-fA-F]{6}$/.test(String(badge.textColor || '')) ? badge.textColor : '#FFFFFF';
-      return { id, name, icon: String(badge.icon || '🏷️').slice(0, 12), color, textColor };
+      return { id, name, icon: String(badge.icon || '🏷️').slice(0, 12), color: /^#[0-9a-fA-F]{6}$/.test(String(badge.color || '')) ? badge.color : '#4A90E2', textColor: /^#[0-9a-fA-F]{6}$/.test(String(badge.textColor || '')) ? badge.textColor : '#FFFFFF' };
     });
     if (!cleanBadges.some(b => b.id === 'new')) cleanBadges.unshift({ id: 'new', name: 'جديد', icon: '⚡', color: '#4AE2A0', textColor: '#07131F' });
     if (!cleanBadges.some(b => b.id === 'featured')) cleanBadges.push({ id: 'featured', name: 'مميز', icon: '⭐', color: '#F39C12', textColor: '#FFFFFF' });
@@ -936,24 +766,15 @@ app.post('/api/badges/save', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-/* =========================================================
-   ✅ الأيقونات المربعة
-   ========================================================= */
 app.post('/api/quick-icons', async (req, res) => {
-  try {
-    await getUserFromReq(req);
-    const icons = await getQuickIconsList();
-    res.json({ ok: true, icons });
-  } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
+  try { await getUserFromReq(req); res.json({ ok: true, icons: await getQuickIconsList() }); } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
-
 app.post('/api/quick-icons/save', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     if (user.role !== 'owner' && user.role !== 'admin') throw new Error('ليس لديك صلاحية');
-    const { icons } = req.body;
-    if (!Array.isArray(icons)) throw new Error('بيانات غير صحيحة');
-    await saveQuickIconsList(icons);
+    if (!Array.isArray(req.body.icons)) throw new Error('بيانات غير صحيحة');
+    await saveQuickIconsList(req.body.icons);
     res.json({ ok: true });
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
@@ -990,35 +811,63 @@ async function createStarsInvoice(order) {
   const webhookSecret = await getStarsWebhookSecret();
   const publicBaseUrl = await getPublicBaseUrl();
   if (!webhookSecret || !publicBaseUrl) throw new Error('دفع Stars غير مهيأ. افتح إعدادات الدفع في لوحة التحكم وأكمل إعداد Webhook.');
-  const title = `DAYO ${order.orderCode}`.slice(0, 32);
-  const description = `دفع طلب DAYO STORE رقم ${order.orderCode}`.slice(0, 255);
   return telegramApi('createInvoiceLink', {
-    title, description, payload: order.id, provider_token: '', currency: 'XTR',
+    title: `DAYO ${order.orderCode}`.slice(0, 32),
+    description: `دفع طلب DAYO STORE رقم ${order.orderCode}`.slice(0, 255),
+    payload: order.id, provider_token: '', currency: 'XTR',
     prices: [{ label: `طلب ${order.orderCode}`.slice(0, 32), amount: Math.round(order.total) }]
   });
 }
 
-async function markOrderPaid(order, source, chargeReference = '') {
+// ✅ NEW: تسجيل الدفع كـ "مقدم" بانتظار مراجعة المشرف (بدون تأكيد تلقائي)
+async function markOrderAsSubmitted(order, source, chargeReference = '') {
   const orders = db.collection('orders');
   const now = new Date();
   const result = await orders.updateOne(
-    { id: order.id, status: 'awaiting_payment', paymentStatus: { $ne: 'paid' } },
+    { id: order.id, status: 'awaiting_payment' },
     { $set: {
-      status: 'paid', statusLabel: ORDER_STATUS_LABELS.paid, paymentStatus: 'paid',
-      paidAt: now, updatedAt: now, paymentConfirmedBy: source,
+      paymentStatus: 'submitted',
+      paymentNotified: true,
+      paymentNotifiedAt: now,
+      updatedAt: now,
+      paymentConfirmedBy: source,
       paymentReference: String(chargeReference || '').slice(0, 300)
-    } }
+    }}
+  );
+  if (result.modifiedCount) {
+    await Promise.allSettled([
+      addNotification(order.userId, 'تم استلام دفعتك', `استلمنا دفعة طلبك ${order.orderCode}. الطلب الآن بانتظار مراجعة الإدارة وتأكيد الطلب.`, 'info', 'orders', { orderId: order.id }),
+      notifyAdmins('💰 دفعة جديدة بانتظار التأكيد', `تم دفع الطلب ${order.orderCode} (${moneyForServer(order.total, order.currency)}) عبر ${source}. راجع الطلبات وأكّد الدفع.`, 'warning')
+    ]);
+  }
+  return result.modifiedCount > 0;
+}
+
+// ✅ NEW: التأكيد اليدوي للدفع من قبل المشرف/المالك
+async function markOrderPaidManually(order, confirmedBy) {
+  const orders = db.collection('orders');
+  const now = new Date();
+  const result = await orders.updateOne(
+    { id: order.id, paymentStatus: 'submitted' },
+    { $set: {
+      status: 'paid',
+      statusLabel: ORDER_STATUS_LABELS.paid,
+      paymentStatus: 'paid',
+      paidAt: now,
+      updatedAt: now,
+      manuallyConfirmedBy: String(confirmedBy || '')
+    }}
   );
   if (result.modifiedCount) {
     if (!order.salesCountedAt) {
-      await orders.updateOne({ id: order.id, $or: [{ salesCountedAt: null }, { salesCountedAt: { $exists: false } }] }, { $set: { salesCountedAt: now } });
+      await orders.updateOne({ id: order.id }, { $set: { salesCountedAt: now } });
       for (const line of order.items || []) {
         await db.collection('products').updateOne({ id: line.productId }, { $inc: { soldCount: Number(line.quantity) || 1 } });
       }
     }
     await Promise.allSettled([
-      addNotification(order.userId, 'تم تأكيد الدفع', `تم استلام دفعة طلبك ${order.orderCode} بنجاح. طلبك بانتظار التنفيذ.`, 'success', 'orders', { orderId: order.id }),
-      notifyAdmins('تم استلام دفعة', `تم تأكيد دفع الطلب ${order.orderCode}.`, 'success')
+      addNotification(order.userId, '✅ تم تأكيد طلبك', `تم تأكيد دفع طلبك ${order.orderCode} بنجاح. طلبك الآن قيد التنفيذ.`, 'success', 'orders', { orderId: order.id }),
+      notifyAdmins('تم تأكيد دفع', `تم تأكيد الطلب ${order.orderCode} يدوياً.`, 'success')
     ]);
   }
   return result.modifiedCount > 0;
@@ -1029,8 +878,7 @@ app.post('/api/notifications/mine', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
     const rows = await db.collection('notifications').find({ userId: String(user.id) }).sort({ createdAt: -1 }).limit(100).toArray();
-    const unread = rows.filter(row => !row.readAt).length;
-    res.json({ ok: true, unread, notifications: rows.map(({ _id, ...row }) => row) });
+    res.json({ ok: true, unread: rows.filter(row => !row.readAt).length, notifications: rows.map(({ _id, ...row }) => row) });
   } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
 
@@ -1045,7 +893,7 @@ app.post('/api/notifications/read', async (req, res) => {
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
-/* Webhook Telegram Stars: يجيب على pre_checkout_query ثم يعتمد successful_payment فقط. */
+/* Webhook Telegram Stars: يجيب على pre_checkout_query ثم يسجل الدفع للمراجعة */
 app.post('/api/telegram/webhook', async (req, res) => {
   try {
     const webhookSecret = await getStarsWebhookSecret();
@@ -1063,7 +911,8 @@ app.post('/api/telegram/webhook', async (req, res) => {
       const order = await db.collection('orders').findOne({ id: String(payment.invoice_payload || ''), paymentMethod: 'stars' });
       if (order && String(order.userId) === String(message.from?.id) && payment.currency === 'XTR' && Number(payment.total_amount) === Math.round(Number(order.total))) {
         await db.collection('orders').updateOne({ id: order.id }, { $set: { telegramPaymentChargeId: payment.telegram_payment_charge_id || '', providerPaymentChargeId: payment.provider_payment_charge_id || '' } });
-        await markOrderPaid(order, 'telegram_stars', payment.telegram_payment_charge_id || '');
+        // ✅ NEW: لا تؤكد تلقائياً - أرسل للمراجعة
+        await markOrderAsSubmitted(order, 'telegram_stars', payment.telegram_payment_charge_id || '');
       }
     }
     res.status(200).send('OK');
@@ -1078,7 +927,7 @@ const ORDER_STATUS_LABELS = {
   awaiting_payment: 'بانتظار الدفع', paid: 'تم تأكيد الدفع', processing: 'قيد التنفيذ',
   completed: 'مكتمل', cancelled: 'ملغي', rejected: 'مرفوض'
 };
-const ORDER_CURRENCIES = ['sar', 'usd', 'ton', 'stars']; // usd هنا تعني USDT على شبكة TON
+const ORDER_CURRENCIES = ['sar', 'usd', 'ton', 'stars'];
 
 function cleanOrderCurrency(value) {
   const currency = String(value || '').toLowerCase();
@@ -1096,6 +945,7 @@ function getDiscountedUnitPrice(product, currency) {
   const discount = Math.min(100, Math.max(0, Number(product.discount) || 0));
   return orderRound(raw * (1 - discount / 100), currency);
 }
+
 async function getPaymentSettings() {
   const saved = await getPaymentConfigRaw();
   const publicBaseUrl = await getPublicBaseUrl();
@@ -1111,10 +961,7 @@ async function getPaymentSettings() {
     tonConnectEnabled: saved.tonConnectEnabled !== false && tonConnectReady,
     tonEnabled: saved.tonEnabled !== false,
     usdtEnabled: saved.usdtEnabled !== false,
-    tonConnectReady,
-    tonReceiverAddress,
-    toncenterApiKeyConfigured,
-    tonUsdtMasterAddress,
+    tonConnectReady, tonReceiverAddress, toncenterApiKeyConfigured, tonUsdtMasterAddress,
     starsEnabled: saved.starsEnabled !== false && !!(starsSecret && publicBaseUrl) && (saved.starsWebhookConfigured === true || !!(ENV_TELEGRAM_WEBHOOK_SECRET && ENV_PUBLIC_BASE_URL)),
     starsSecretConfigured: !!starsSecret,
     publicBaseUrl,
@@ -1127,9 +974,7 @@ async function getPaymentSettings() {
 app.post('/api/payments/settings', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
-    const settings = await getPaymentSettings();
-    // Never return provider API tokens or webhook secrets to the browser.
-    res.json({ ok: true, settings, role: user.role });
+    res.json({ ok: true, settings: await getPaymentSettings(), role: user.role });
   } catch (err) { res.status(401).json({ ok: false, error: err.message }); }
 });
 
@@ -1153,36 +998,25 @@ app.post('/api/payments/settings/save', async (req, res) => {
 
     const previous = await getPaymentConfigRaw();
     const currentReceiverAddress = String(previous.tonReceiverAddress || '').trim();
-    if (tonReceiverAddressInput !== currentReceiverAddress && user.role !== 'owner') {
-      throw new Error('تغيير عنوان محفظة الاستقبال متاح للمالك فقط');
-    }
+    if (tonReceiverAddressInput !== currentReceiverAddress && user.role !== 'owner') throw new Error('تغيير عنوان محفظة الاستقبال متاح للمالك فقط');
     if (tonReceiverAddressInput) normalizeTonAddress(tonReceiverAddressInput);
     const effectiveReceiverAddress = tonReceiverAddressInput || currentReceiverAddress;
-    if ((toncenterApiKeyInput || clearToncenterApiKey || tonUsdtMasterAddressInput) && user.role !== 'owner') {
-      throw new Error('تعديل مفتاح TON Center وعنوان عقد USDT متاح للمالك فقط');
-    }
+    
+    if ((toncenterApiKeyInput || clearToncenterApiKey || tonUsdtMasterAddressInput) && user.role !== 'owner') throw new Error('تعديل مفتاح TON Center وعنوان عقد USDT متاح للمالك فقط');
     if (tonUsdtMasterAddressInput) {
       try { Address.parse(tonUsdtMasterAddressInput); }
       catch (_) { throw new Error('عنوان عقد USDT على شبكة TON غير صالح'); }
     }
     if (toncenterApiKeyInput.length > 500) throw new Error('مفتاح TON Center غير صالح');
-    if (tonConnectEnabled && (tonEnabled || usdtEnabled) && !effectiveReceiverAddress) {
-      throw new Error('أدخل عنوان محفظة الاستقبال من حساب المالك أولًا');
-    }
-    if (manualEnabled && !/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(manualPaymentUsername)) {
-      throw new Error('أدخل يوزر تيليجرام صحيحًا لحساب استقبال الدفع');
-    }
-    if (starsEnabled && !/^https:\/\//i.test(publicBaseUrl)) {
-      throw new Error('أدخل رابط المتجر العام ويجب أن يبدأ بـ https://');
-    }
+    if (tonConnectEnabled && (tonEnabled || usdtEnabled) && !effectiveReceiverAddress) throw new Error('أدخل عنوان محفظة الاستقبال من حساب المالك أولًا');
+    if (manualEnabled && !/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(manualPaymentUsername)) throw new Error('أدخل يوزر تيليجرام صحيحًا لحساب استقبال الدفع');
+    if (starsEnabled && !/^https:\/\//i.test(publicBaseUrl)) throw new Error('أدخل رابط المتجر العام ويجب أن يبدأ بـ https://');
 
     const baseUrlChanged = !!(previous.publicBaseUrl && previous.publicBaseUrl !== publicBaseUrl);
     const paymentSettings = {
-      ...previous,
-      manualEnabled, manualInstructions, manualPaymentUsername,
+      ...previous, manualEnabled, manualInstructions, manualPaymentUsername,
       tonConnectEnabled, tonEnabled, usdtEnabled, starsEnabled,
-      tonReceiverAddress: effectiveReceiverAddress,
-      publicBaseUrl,
+      tonReceiverAddress: effectiveReceiverAddress, publicBaseUrl,
       updatedAt: new Date(), updatedBy: String(user.id)
     };
     if (user.role === 'owner') {
@@ -1190,7 +1024,6 @@ app.post('/api/payments/settings/save', async (req, res) => {
       if (clearToncenterApiKey) delete paymentSettings.toncenterApiKeyEnc;
       if (tonUsdtMasterAddressInput) paymentSettings.tonUsdtMasterAddress = Address.parse(tonUsdtMasterAddressInput).toString({ urlSafe: true, bounceable: true });
     }
-    // Remove deprecated Crypto Pay configuration from active settings.
     delete paymentSettings.cryptoEnabled;
     delete paymentSettings.cryptoTonEnabled;
     delete paymentSettings.cryptoUsdtEnabled;
@@ -1205,7 +1038,6 @@ app.post('/api/payments/settings/save', async (req, res) => {
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
-// Safe Stars webhook setup: it never overwrites a different existing bot webhook.
 app.post('/api/payments/telegram-webhook/setup', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -1216,7 +1048,7 @@ app.post('/api/payments/telegram-webhook/setup', async (req, res) => {
     const target = settings.telegramWebhookUrl;
     if (info?.url && info.url !== target) {
       return res.status(409).json({ ok: false, conflict: true, existingUrl: info.url, error: 'للبوت Webhook آخر. لم نغيّره حفاظًا على وظائف البوت الحالية.' });
-    }
+.    }
     const secret = await getStarsWebhookSecret();
     await telegramApi('setWebhook', { url: target, secret_token: secret, allowed_updates: ['message', 'pre_checkout_query'] });
     await db.collection('store').updateOne({ _id: 'main' }, { $set: { 'paymentSettings.starsWebhookConfigured': true, 'paymentSettings.starsWebhookUpdatedAt': new Date() } });
@@ -1239,6 +1071,7 @@ app.post('/api/orders/create', async (req, res) => {
     const settings = await getPaymentSettings();
     const requestedItems = req.body?.items;
     if (!Array.isArray(requestedItems) || requestedItems.length < 1 || requestedItems.length > 30) throw new Error('السلة فارغة أو تحتوي عددًا غير مسموح من المنتجات');
+    
     const merged = new Map();
     for (const item of requestedItems) {
       const productId = String(item?.productId || '').trim();
@@ -1259,12 +1092,9 @@ app.post('/api/orders/create', async (req, res) => {
       total = orderRound(total + lineTotal, currency);
       lines.push({ productId: String(product.id), name: String(product.name || 'منتج').slice(0, 150), quantity, unitPrice, lineTotal });
     }
+    
     if (currency === 'sar' && (!settings.manualEnabled || !settings.manualPaymentUsername)) throw new Error('الدفع اليدوي بالريال غير مهيأ حاليًا');
-    if (['ton', 'usd'].includes(currency) && (
-      !settings.tonConnectEnabled ||
-      (currency === 'ton' && !settings.tonEnabled) ||
-      (currency === 'usd' && !settings.usdtEnabled)
-    )) throw new Error('وسيلة الدفع بهذه العملة غير مفعّلة حاليًا من لوحة التحكم.');
+    if (['ton', 'usd'].includes(currency) && (!settings.tonConnectEnabled || (currency === 'ton' && !settings.tonEnabled) || (currency === 'usd' && !settings.usdtEnabled))) throw new Error('وسيلة الدفع بهذه العملة غير مفعّلة حاليًا من لوحة التحكم.');
     if (currency === 'stars' && !settings.starsEnabled) throw new Error('الدفع عبر Telegram Stars غير مفعّل حاليًا من لوحة التحكم.');
     if (!(total > 0)) throw new Error('إجمالي الطلب غير صالح');
     if (currency === 'stars' && (!Number.isInteger(total) || total > 100000)) throw new Error('قيمة Stars غير صحيحة أو تتجاوز الحد المسموح');
@@ -1286,9 +1116,7 @@ app.post('/api/orders/create', async (req, res) => {
 
     let checkoutUrl = '';
     try {
-      if (paymentMethod === 'tonconnect') {
-        // TON Connect transaction is prepared only after the customer connects their wallet.
-      } else if (paymentMethod === 'stars') {
+      if (paymentMethod === 'stars') {
         checkoutUrl = await createStarsInvoice(order);
         await db.collection('orders').updateOne({ id: order.id }, { $set: { providerPayUrl: checkoutUrl, providerCreatedAt: new Date() } });
       }
@@ -1301,14 +1129,9 @@ app.post('/api/orders/create', async (req, res) => {
       addNotification(order.userId, 'تم إنشاء طلبك', `تم استلام طلبك ${order.orderCode}. ${paymentMethod === 'manual' ? 'أكمل التحويل اليدوي لتأكيده.' : 'أكمل الدفع لتأكيد الطلب.'}`, 'info', 'orders', { orderId: order.id }),
       notifyAdmins('طلب جديد', `وصل طلب جديد ${order.orderCode} بقيمة ${moneyForServer(total, currency)}.`, 'info')
     ]);
-    res.json({
-      ok: true,
-      order: { id: order.id, orderCode, total, currency, status: order.status, paymentMethod, paymentInstructions: order.paymentInstructions, manualPaymentUsername: order.manualPaymentUsername },
-      checkoutUrl
-    });
+    res.json({ ok: true, order: { id: order.id, orderCode, total, currency, status: order.status, paymentMethod, paymentInstructions: order.paymentInstructions, manualPaymentUsername: order.manualPaymentUsername }, checkoutUrl });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
-
 
 app.post('/api/ton/prepare', async (req, res) => {
   try {
@@ -1318,9 +1141,11 @@ app.post('/api/ton/prepare', async (req, res) => {
     const order = await db.collection('orders').findOne({ id: orderId, userId: user.id, paymentMethod: 'tonconnect', status: 'awaiting_payment' });
     if (!order) throw new Error('الطلب غير موجود أو لم يعد بانتظار الدفع');
     if (!(await getTonApiKey())) throw new Error('أضف مفتاح TON Center من لوحة تحكم DAYO > الدفع والتحصيل');
+    
     const receiverAddress = await getTonReceiverAddress();
     const sender = Address.parse(walletAddress);
     await db.collection('orders').updateOne({ id: order.id, userId: user.id }, { $set: { tonSenderAddress: sender.toRawString().toLowerCase(), tonPaymentPreparedAt: new Date(), updatedAt: new Date() } });
+    
     const comment = createOrderComment(order.orderCode).toBoc().toString('base64');
     let message;
     if (order.currency === 'ton') {
@@ -1329,18 +1154,12 @@ app.post('/api/ton/prepare', async (req, res) => {
       const senderJettonWallet = await getJettonWalletAddress(sender.toString({ urlSafe: true, bounceable: true }));
       const forwardPayload = createOrderComment(order.orderCode);
       const jettonBody = beginCell()
-        .storeUint(0xf8a7ea5, 32)
-        .storeUint(BigInt(Date.now()), 64)
-        .storeCoins(BigInt(decimalToUnits(order.total, 6)))
-        .storeAddress(receiverAddress)
-        .storeAddress(sender)
-        .storeBit(0)
-        .storeCoins(10000000n) // 0.01 TON لتغطية إشعار التحويل
-        .storeBit(1)
-        .storeRef(forwardPayload)
-        .endCell();
+        .storeUint(0xf8a7ea5, 32).storeUint(BigInt(Date.now()), 64)
+        .storeCoins(BigInt(decimalToUnits(order.total, 6))).storeAddress(receiverAddress).storeAddress(sender)
+        .storeBit(0).storeCoins(10000000n).storeBit(1).storeRef(forwardPayload).endCell();
       message = { address: senderJettonWallet.toString({ urlSafe: true, bounceable: true }), amount: '50000000', payload: jettonBody.toBoc().toString('base64') };
     } else throw new Error('عملة الطلب غير مدعومة');
+    
     res.json({ ok: true, transaction: { validUntil: Math.floor(Date.now() / 1000) + 300, network: TON_NETWORK, messages: [message] } });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
@@ -1366,11 +1185,15 @@ app.post('/api/ton/verify', async (req, res) => {
     const order = await db.collection('orders').findOne({ id: orderId, userId: user.id, paymentMethod: 'tonconnect' });
     if (!order) throw new Error('الطلب غير موجود');
     if (order.paymentStatus === 'paid') return res.json({ ok: true, paid: true, status: order.status });
+    if (order.paymentStatus === 'submitted') return res.json({ ok: true, paid: true, status: 'submitted', message: 'تم استلام التحويل. الطلب بانتظار تأكيد الإدارة.' });
     if (!order.tonWalletSubmittedAt || !order.tonSenderAddress) throw new Error('لم يتم إرسال معاملة من المحفظة لهذا الطلب');
+    
     const result = await verifyTonConnectOrder(order);
     if (!result.paid) return res.json({ ok: true, paid: false, message: 'لم يظهر التحويل المؤكد على الشبكة بعد. أعد المحاولة بعد قليل.' });
-    await markOrderPaid(order, 'ton_connect', result.reference);
-    return res.json({ ok: true, paid: true, reference: result.reference, status: 'paid' });
+    
+    // ✅ NEW: لا تؤكد تلقائياً - أرسل للمراجعة
+    await markOrderAsSubmitted(order, 'ton_connect', result.reference);
+    return res.json({ ok: true, paid: true, reference: result.reference, status: 'submitted', message: 'تم استلام التحويل. الطلب بانتظار تأكيد الإدارة.' });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
@@ -1431,6 +1254,47 @@ app.post('/api/orders/list', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
+// ✅ NEW: تأكيد يدوي للدفع من المشرف/المالك
+app.post('/api/orders/confirm-payment', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية لتأكيد الدفع');
+    const orderId = String(req.body?.orderId || '');
+    if (!orderId) throw new Error('معرف الطلب مطلوب');
+    const order = await db.collection('orders').findOne({ id: orderId });
+    if (!order) throw new Error('الطلب غير موجود');
+    if (order.paymentStatus !== 'submitted') throw new Error('هذا الطلب لم يتم دفعه بعد أو تم تأكيده مسبقاً');
+    
+    const confirmed = await markOrderPaidManually(order, user.id);
+    if (!confirmed) throw new Error('تعذر تأكيد الدفع');
+    res.json({ ok: true, message: 'تم تأكيد الدفع بنجاح' });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
+// ✅ NEW: رفض/إلغاء طلب مدفوع بانتظار التأكيد
+app.post('/api/orders/reject-payment', async (req, res) => {
+  try {
+    const user = await getUserFromReq(req);
+    if (!['owner', 'admin'].includes(user.role)) throw new Error('ليس لديك صلاحية');
+    const orderId = String(req.body?.orderId || '');
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
+    if (!orderId) throw new Error('معرف الطلب مطلوب');
+    const order = await db.collection('orders').findOne({ id: orderId });
+    if (!order) throw new Error('الطلب غير موجود');
+    if (order.paymentStatus !== 'submitted') throw new Error('لا يمكن رفض هذا الطلب');
+    
+    await db.collection('orders').updateOne(
+      { id: orderId },
+      { $set: { status: 'rejected', statusLabel: ORDER_STATUS_LABELS.rejected, paymentStatus: 'rejected', updatedAt: new Date(), rejectedBy: user.id, rejectionReason: reason } }
+    );
+    await Promise.allSettled([
+      addNotification(order.userId, 'تم رفض الدفع', `تم رفض دفعة طلبك ${order.orderCode}. ${reason ? 'السبب: ' + reason : 'تواصل مع الدعم.'}`, 'warning', 'orders', { orderId }),
+      notifyAdmins('تم رفض دفع', `تم رفض الطلب ${order.orderCode}. ${reason}`, 'warning')
+    ]);
+    res.json({ ok: true });
+  } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
+});
+
 app.post('/api/orders/update-status', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -1438,24 +1302,16 @@ app.post('/api/orders/update-status', async (req, res) => {
     const orderId = String(req.body?.orderId || '');
     const status = String(req.body?.status || '');
     if (!orderId || !ORDER_STATUSES.includes(status)) throw new Error('بيانات تحديث الطلب غير صحيحة');
+    
     const orders = db.collection('orders');
     const order = await orders.findOne({ id: orderId });
     if (!order) throw new Error('الطلب غير موجود');
-    if (['paid', 'processing', 'completed'].includes(order.status) && status === 'cancelled') {
-      throw new Error('لا يمكن إلغاء طلب تم تأكيد دفعه من هذه الشاشة؛ يلزم إجراء استرداد منفصل');
-    }
-    if (['processing', 'completed'].includes(status) && order.paymentStatus !== 'paid') {
-      throw new Error('يجب تأكيد الدفع أولًا قبل بدء التنفيذ أو إكمال الطلب');
-    }
-    if (status === 'paid' && order.paymentMethod === 'manual' && !order.paymentNotified) {
-      throw new Error('لا يمكن تأكيد الدفع قبل أن يرسل العميل إشعار إتمام التحويل');
-    }
-    if (status === 'paid' && ['stars', 'tonconnect'].includes(order.paymentMethod) && order.paymentStatus !== 'paid') {
-      throw new Error('هذا الطلب يستخدم دفعًا تلقائيًا؛ سيتم تأكيده بعد وصول إشعار الدفع الموثوق.');
-    }
-    if (status === 'rejected' && order.paymentStatus === 'paid') {
-      throw new Error('لا يمكن رفض طلب تم تأكيد دفعه؛ استخدم إجراء استرداد منفصل');
-    }
+    
+    if (['paid', 'processing', 'completed'].includes(order.status) && status === 'cancelled') throw new Error('لا يمكن إلغاء طلب تم تأكيد دفعه من هذه الشاشة؛ يلزم إجراء استرداد منفصل');
+    if (['processing', 'completed'].includes(status) && order.paymentStatus !== 'paid' && order.paymentStatus !== 'submitted') throw new Error('يجب تأكيد الدفع أولًا قبل بدء التنفيذ أو إكمال الطلب');
+    if (status === 'paid' && order.paymentMethod === 'manual' && !order.paymentNotified && order.paymentStatus !== 'submitted') throw new Error('لا يمكن تأكيد الدفع قبل أن يرسل العميل إشعار إتمام التحويل');
+    if (status === 'rejected' && order.paymentStatus === 'paid') throw new Error('لا يمكن رفض طلب تم تأكيد دفعه؛ استخدم إجراء استرداد منفصل');
+    
     const update = { status, statusLabel: ORDER_STATUS_LABELS[status], updatedAt: new Date(), updatedBy: user.id };
     if (status === 'paid' && !order.salesCountedAt) {
       const countedAt = new Date();
@@ -1474,7 +1330,7 @@ app.post('/api/orders/update-status', async (req, res) => {
       if (status === 'rejected') update.paymentStatus = 'rejected';
       await orders.updateOne({ id: orderId }, { $set: update });
     }
-    const updatedOrder = await orders.findOne({ id: orderId });
+    
     const notificationText = {
       paid: 'تم تأكيد دفع طلبك، وسيتم تجهيزه قريبًا.',
       processing: 'بدأ فريق DAYO تنفيذ طلبك.',
@@ -1482,6 +1338,7 @@ app.post('/api/orders/update-status', async (req, res) => {
       cancelled: 'تم إلغاء طلبك.',
       rejected: 'تعذر قبول طلبك. يرجى التواصل مع الدعم.'
     }[status] || 'تم تحديث حالة طلبك.';
+    
     await Promise.allSettled([addNotification(order.userId, ORDER_STATUS_LABELS[status], `${notificationText} رقم الطلب ${order.orderCode}.`, status === 'completed' || status === 'paid' ? 'success' : 'info', 'orders', { orderId })]);
     res.json({ ok: true });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
