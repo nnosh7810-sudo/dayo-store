@@ -2159,15 +2159,50 @@ async function openMyOrders() {
     const response = await apiCall('/api/orders/mine');
     if (!response.ok) throw new Error(response.error || 'تعذر تحميل الطلبات');
     const orders = Array.isArray(response.orders) ? response.orders : [];
+    window.dayoMyOrders = orders;
     page.innerHTML = `<div class="dayo-page-head"><button class="dayo-back" onclick="openCart()">‹</button><div><h2>طلباتي</h2><small>${orders.length} طلب</small></div><button class="dayo-secondary" onclick="openCart()">السلة</button></div>
-      ${orders.length ? `<div class="dayo-orders-list">${orders.map(order => `<article class="dayo-order-card"><div class="dayo-order-card-head"><strong>${escapeHTML(order.orderCode || 'طلب')}</strong><span class="dayo-status status-${escapeHTML(order.status)}">${escapeHTML(order.status === 'awaiting_payment' && order.paymentNotified ? 'تم إشعار الدفع – بانتظار تأكيد الحساب' : (ORDER_STATUS_TEXT[order.status] || order.status))}</span></div>
+      ${orders.length ? `<div class="dayo-orders-list">${orders.map(order => `<article class="dayo-order-card dayo-order-card-clickable" role="button" tabindex="0" aria-label="عرض تفاصيل الطلب ${escapeHTML(order.orderCode || '')}" onclick="openOrderDetails('${encodedArg(order.id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openOrderDetails('${encodedArg(order.id)}')}"><div class="dayo-order-card-head"><strong>${escapeHTML(order.orderCode || 'طلب')}</strong><span class="dayo-status status-${escapeHTML(order.status)}">${escapeHTML(order.status === 'awaiting_payment' && order.paymentNotified ? 'تم إشعار الدفع – بانتظار تأكيد الحساب' : (ORDER_STATUS_TEXT[order.status] || order.status))}</span></div>
         <div class="dayo-order-lines">${(order.items || []).map(item => `<div>${escapeHTML(item.name)} × ${Number(item.quantity) || 1}</div>`).join('')}</div>
         <div class="dayo-total-row"><span>${escapeHTML(currencyLabel(order.currency))}</span><strong>${money(order.total, order.currency)}</strong></div>
-        <small class="dayo-muted">${order.createdAt ? new Date(order.createdAt).toLocaleString('ar-SA') : ''}</small>
-        ${order.paymentMethod === 'tonconnect' && order.status === 'awaiting_payment' && order.tonWalletSubmittedAt ? `<button class="dayo-secondary" type="button" onclick="retryTonOrderVerification('${encodedArg(order.id)}')">إعادة التحقق من دفع TON / USDT</button>` : ''}
+        <div class="dayo-order-card-foot"><small class="dayo-muted">${order.createdAt ? new Date(order.createdAt).toLocaleString('ar-SA') : ''}</small><span class="dayo-order-open-hint">عرض التفاصيل ←</span></div>
       </article>`).join('')}</div>` : '<div class="dayo-empty-cart"><div>🧾</div><h3>لا توجد طلبات حتى الآن</h3><p>عند إتمام أول عملية شراء ستظهر تفاصيلها هنا.</p><button class="dayo-primary" onclick="openShop()">تصفح المتجر</button></div>'}`;
   } catch (error) { page.innerHTML = `<div class="dayo-page-head"><h2>طلباتي</h2></div><p class="dayo-warning">${escapeHTML(error.message)}</p>`; }
 }
+
+function orderPaymentMethodLabel(order) {
+  if (order.paymentMethod === 'tonconnect') return order.currency === 'ton' ? 'TON Connect – TON' : 'TON Connect – USDT على شبكة TON';
+  if (order.paymentMethod === 'stars') return 'Telegram Stars';
+  if (order.paymentMethod === 'manual') return 'تحويل يدوي – ريال سعودي';
+  if (order.paymentMethod === 'cryptopay') return 'وسيلة دفع قديمة (سجل سابق)';
+  return 'وسيلة دفع أخرى';
+}
+function orderPaymentStatusLabel(order) {
+  if (order.paymentStatus === 'paid' || ['paid','processing','completed'].includes(order.status)) return 'تم تأكيد الدفع';
+  if (order.paymentMethod === 'manual' && order.paymentNotified) return 'تم إرسال إشعار التحويل – بانتظار مراجعة الإدارة';
+  if (order.paymentMethod === 'tonconnect' && order.tonWalletSubmittedAt) return 'تم إرسال معاملة المحفظة – بانتظار تأكيد الشبكة';
+  return 'بانتظار إتمام الدفع';
+}
+function openOrderDetails(encodedOrderId) {
+  let orderId = encodedOrderId;
+  try { orderId = decodeURIComponent(encodedOrderId); } catch (_) {}
+  const order = (Array.isArray(window.dayoMyOrders) ? window.dayoMyOrders : []).find(item => String(item.id) === String(orderId));
+  if (!order) { showMessage('تعذر العثور على تفاصيل الطلب. حدّث قائمة الطلبات وحاول مجددًا.'); return; }
+  const page = ensureDayoDynamicPage();
+  const items = Array.isArray(order.items) ? order.items : [];
+  const isAutomaticPayment = order.paymentMethod === 'tonconnect';
+  const canRetryAutomatic = isAutomaticPayment && order.status === 'awaiting_payment' && order.paymentStatus !== 'paid' && !!order.tonWalletSubmittedAt && !!order.tonSenderAddress;
+  const canContinueStars = order.paymentMethod === 'stars' && order.status === 'awaiting_payment' && !!order.providerPayUrl;
+  const canNotifyManual = order.paymentMethod === 'manual' && order.status === 'awaiting_payment' && !order.paymentNotified;
+  const dateText = order.createdAt ? new Date(order.createdAt).toLocaleString('ar-SA') : 'غير متوفر';
+  const itemRows = items.map(item => `<div class="dayo-order-detail-item"><span>${escapeHTML(item.name || 'منتج')} <small>× ${Number(item.quantity) || 1}</small></span><strong>${money(item.lineTotal ?? ((Number(item.unitPrice) || 0) * (Number(item.quantity) || 1)), order.currency)}</strong></div>`).join('');
+  const automaticNote = isAutomaticPayment && order.tonWalletSubmittedAt ? `<div class="dayo-order-detail-note"><strong>بيانات محاولة الدفع</strong><p>عنوان المحفظة المرسلة: <span dir="ltr">${escapeHTML(order.tonSenderAddress || 'غير متوفر')}</span></p><p>وقت الإرسال: ${new Date(order.tonWalletSubmittedAt).toLocaleString('ar-SA')}</p>${order.paymentReference ? `<p>مرجع المعاملة: <span dir="ltr">${escapeHTML(order.paymentReference)}</span></p>` : ''}</div>` : '';
+  const manualNote = order.paymentMethod === 'manual' ? `<div class="dayo-order-detail-note"><strong>تعليمات التحويل اليدوي</strong><p>${escapeHTML(order.paymentInstructions || 'راجع تعليمات المتجر لإتمام التحويل.')}</p>${order.manualPaymentUsername ? `<p>حساب الاستقبال: @${escapeHTML(order.manualPaymentUsername)}</p>` : ''}${order.paymentNotified ? '<p>تم إرسال إشعار التحويل إلى الإدارة.</p>' : ''}</div>` : '';
+  const starsAction = canContinueStars ? `<a class="dayo-primary" href="${escapeHTML(safeWebURL(order.providerPayUrl))}" target="_blank" rel="noopener noreferrer">متابعة دفع Telegram Stars</a>` : '';
+  const actionButtons = `${canRetryAutomatic ? `<button class="dayo-primary" type="button" onclick="retryTonOrderVerification('${encodedArg(order.id)}')">إعادة التحقق من الدفع</button>` : ''}${canNotifyManual ? `<button class="dayo-primary" type="button" onclick="notifyManualPayment('${encodedArg(order.id)}')">أشعرت المتجر بإتمام التحويل</button>` : ''}${starsAction}`;
+  page.querySelector('.dayo-order-detail-overlay')?.remove();
+  page.insertAdjacentHTML('beforeend', `<div class="dayo-order-detail-overlay" role="presentation" onclick="if(event.target===this)closeOrderDetails()"><section class="dayo-order-detail-modal" role="dialog" aria-modal="true" aria-labelledby="dayo-order-detail-title"><div class="dayo-order-detail-head"><div><small>تفاصيل الطلب</small><h3 id="dayo-order-detail-title">${escapeHTML(order.orderCode || 'طلب')}</h3></div><button class="dayo-order-detail-close" type="button" aria-label="إغلاق" onclick="closeOrderDetails()">×</button></div><div class="dayo-order-detail-status"><span class="dayo-status status-${escapeHTML(order.status)}">${escapeHTML(ORDER_STATUS_TEXT[order.status] || order.status || 'غير معروف')}</span><strong>${escapeHTML(orderPaymentStatusLabel(order))}</strong></div><div class="dayo-order-detail-section"><h4>المنتجات</h4>${itemRows || '<p class="dayo-muted">لا توجد تفاصيل للمنتجات.</p>'}<div class="dayo-order-detail-total"><span>الإجمالي</span><strong>${money(order.total, order.currency)}</strong></div></div><div class="dayo-order-detail-section"><h4>معلومات الدفع والطلب</h4><div class="dayo-order-detail-row"><span>طريقة الدفع</span><strong>${escapeHTML(orderPaymentMethodLabel(order))}</strong></div><div class="dayo-order-detail-row"><span>حالة الدفع</span><strong>${escapeHTML(orderPaymentStatusLabel(order))}</strong></div><div class="dayo-order-detail-row"><span>تاريخ الطلب</span><strong>${escapeHTML(dateText)}</strong></div>${order.paymentReference ? `<div class="dayo-order-detail-row"><span>مرجع الدفع</span><strong dir="ltr">${escapeHTML(order.paymentReference)}</strong></div>` : ''}</div>${automaticNote}${manualNote}<div class="dayo-order-detail-actions">${actionButtons}<button class="dayo-secondary" type="button" onclick="closeOrderDetails()">إغلاق التفاصيل</button></div></section></div>`);
+}
+function closeOrderDetails() { document.querySelector('.dayo-order-detail-overlay')?.remove(); }
 
 async function retryTonOrderVerification(encodedOrderId) {
   let orderId = encodedOrderId;
