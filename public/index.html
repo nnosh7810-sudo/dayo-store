@@ -267,7 +267,7 @@
     }
     .product-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
     .product-header h1 { color: white; margin: 0; font-size: 18px; font-weight: 700; }
-    .product-hero { width: 100%; border-radius: 20px; overflow: hidden; background: #152a47; margin-bottom: 15px; border: 1px solid #2a3b5c; }
+    .product-hero { position: relative; width: 100%; border-radius: 20px; overflow: hidden; background: #152a47; margin-bottom: 15px; border: 1px solid #2a3b5c; }
     .product-hero img { width: 100%; height: 240px; object-fit: cover; display: block; }
     .product-hero .hero-placeholder { width: 100%; height: 240px; display: flex; justify-content: center; align-items: center; font-size: 60px; color: #4A90E2; background: linear-gradient(135deg, #152a47, #0a101f); }
     .product-info { background: linear-gradient(180deg, #111a2e 0%, #0a101f 100%); border: 1px solid #1c2a45; border-radius: 16px; padding: 15px; margin-bottom: 15px; }
@@ -632,7 +632,6 @@
     @media(max-width:420px) { .dayo-cart-item { gap:8px; padding:10px; } .dayo-cart-image { width:54px;height:54px; } .dayo-line-total { font-size:10px; } .dayo-page-head h2 { font-size:17px; } }
 
 
-
     /* DAYO V5 — order detail interaction */
     .dayo-order-card-clickable { cursor:pointer; transition:border-color .18s ease,transform .18s ease,box-shadow .18s ease; }
     .dayo-order-card-clickable:hover,.dayo-order-card-clickable:focus-visible { border-color:#4A90E2; outline:none; box-shadow:0 8px 24px rgba(35,110,210,.14); transform:translateY(-1px); }
@@ -719,8 +718,24 @@
     .dayo-notifications-empty p { margin:0;font-size:11px; }
     .dayo-drawer-foot { margin-top:auto;padding:13px 4px 3px;border-top:1px solid var(--dy-border);font-size:11px;font-weight:900;letter-spacing:1px; }
     .dayo-drawer-foot span { display:block;margin-top:4px;color:var(--dy-muted);font-size:10px;font-weight:400;letter-spacing:0; }
-    @media(max-width:380px) { .dayo-menu-toggle { left:53px;width:38px;height:38px; } }
 
+    /* ===== إضافات جديدة للميزات المحدّثة ===== */
+    .fav-btn {
+      position: absolute; top: 8px; left: 8px;
+      background: rgba(0,0,0,0.6); border: none; border-radius: 50%;
+      width: 32px; height: 32px; font-size: 18px; cursor: pointer;
+      z-index: 2; display: flex; align-items: center; justify-content: center;
+      transition: transform 0.2s; backdrop-filter: blur(4px);
+    }
+    .fav-btn:active { transform: scale(0.9); }
+    body[data-theme="light"] .fav-btn { background: rgba(255,255,255,0.85); border: 1px solid var(--dy-border); }
+    
+    .dayo-fee-note {
+      font-size: 11px; color: #e74c3c; margin-top: 10px; font-weight: 600; text-align: center; line-height: 1.5;
+    }
+    body[data-theme="light"] .dayo-fee-note { color: #c0392b; }
+
+    @media(max-width:380px) { .dayo-menu-toggle { left:53px;width:38px;height:38px; } }
   </style>
 </head>
 <body>
