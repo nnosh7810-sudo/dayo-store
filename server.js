@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json({ limit: '10mb', verify: (req, res, buffer) => { req.rawBody = buffer.toString('utf8'); } }));
 app.use(express.static('public'));
 
-// حد بسيط للطلبات لمنع الإغراق. في بيئة متعددة الخوادم استخدم Redis أو rate-limit package.
+// حد بسيط للطلبات لمنع الإغراق.
 const requestBuckets = new Map();
 app.use('/api', (req, res, next) => {
   const key = req.ip || req.socket.remoteAddress || 'unknown';
@@ -25,7 +25,6 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// لا تضع أسرار البوت أو قاعدة البيانات داخل الكود.
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGODB_URI = process.env.MONGODB_URI;
 const OWNER_TELEGRAM_ID = process.env.OWNER_TELEGRAM_ID || '51442749';
@@ -40,16 +39,11 @@ if (!BOT_TOKEN) throw new Error('يرجى ضبط BOT_TOKEN في متغيرات �
 if (!MONGODB_URI) throw new Error('يرجى ضبط MONGODB_URI في متغيرات البيئة');
 
 const client = new MongoClient(MONGODB_URI, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
+  serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true }
 });
 
 let db;
 
-// Payment provider credentials entered from the dashboard are encrypted at rest.
 function paymentEncryptionKey() {
   return crypto.createHash('sha256').update(`${BOT_TOKEN}:DAYO_PAYMENT_SETTINGS_V1`).digest();
 }
@@ -126,7 +120,7 @@ async function getJettonWalletAddress(ownerAddress) {
 function cellComment(cell) {
   try {
     const slice = cell.beginParse();
-    if (slicereamingBits < 32 || slice.loadUint(32) !== 0) return '';
+    if (slice.remainingBits < 32 || slice.loadUint(32) !== 0) return '';
     return slice.loadStringTail();
   } catch (_) { return ''; }
 }
@@ -444,6 +438,10 @@ app.post('/api/products/add', async (req, res) => {
     const cleanDiscount = Number(discount || 0);
     if (!Number.isFinite(cleanDiscount) || cleanDiscount < 0 || cleanDiscount > 100) throw new Error('نسبة الخصم يجب أن تكون بين 0 و100');
     
+    // ✅ NEW: إدارة المخزون
+    const stockUnlimited = req.body.stockUnlimited === true;
+    const stock = stockUnlimited ? null : (parseInt(req.body.stock) || 0);
+
     const id = Date.now().toString();
     const newProduct = {
       id, slug: 'product-' + id, link: '#product-' + id,
@@ -452,6 +450,7 @@ app.post('/api/products/add', async (req, res) => {
       image: typeof image === 'string' ? image : '',
       prices: cleanPrices, productType, paymentMethods,
       category: category || 'all', badge: badge || '', discount: cleanDiscount,
+      stock, // <-- حقل المخزون
       soldCount: 0, creatorId: user.id, creatorName: user.name, createdAt: new Date().toISOString()
     };
     await db.collection('products').insertOne(newProduct);
@@ -475,6 +474,11 @@ app.post('/api/products/edit', async (req, res) => {
       if (description !== undefined) updateData.description = typeof description === 'string' ? description.slice(0, 5000) : '';
       if (image !== undefined) updateData.image = typeof image === 'string' ? image : '';
       if (prices !== undefined) updateData.prices = validatePrices(prices);
+      
+      // ✅ NEW: تحديث المخزون
+      if (req.body.stockUnlimited !== undefined) {
+        updateData.stock = req.body.stockUnlimited ? null : (parseInt(req.body.stock) || 0);
+      }
       
       if (req.body?.productType !== undefined || req.body?.paymentMethods !== undefined) {
         const productType = req.body?.productType === 'physical' ? 'physical' : 'digital';
@@ -819,7 +823,7 @@ async function createStarsInvoice(order) {
   });
 }
 
-// ✅ NEW: تسجيل الدفع كـ "مقدم" بانتظار مراجعة المشرف (بدون تأكيد تلقائي)
+// ✅ تسجيل الدفع كـ "مقدم" بانتظار مراجعة المشرف (بدون تأكيد تلقائي)
 async function markOrderAsSubmitted(order, source, chargeReference = '') {
   const orders = db.collection('orders');
   const now = new Date();
@@ -843,7 +847,7 @@ async function markOrderAsSubmitted(order, source, chargeReference = '') {
   return result.modifiedCount > 0;
 }
 
-// ✅ NEW: التأكيد اليدوي للدفع من قبل المشرف/المالك
+// ✅ التأكيد اليدوي للدفع من قبل المشرف/المالك
 async function markOrderPaidManually(order, confirmedBy) {
   const orders = db.collection('orders');
   const now = new Date();
@@ -911,7 +915,7 @@ app.post('/api/telegram/webhook', async (req, res) => {
       const order = await db.collection('orders').findOne({ id: String(payment.invoice_payload || ''), paymentMethod: 'stars' });
       if (order && String(order.userId) === String(message.from?.id) && payment.currency === 'XTR' && Number(payment.total_amount) === Math.round(Number(order.total))) {
         await db.collection('orders').updateOne({ id: order.id }, { $set: { telegramPaymentChargeId: payment.telegram_payment_charge_id || '', providerPaymentChargeId: payment.provider_payment_charge_id || '' } });
-        // ✅ NEW: لا تؤكد تلقائياً - أرسل للمراجعة
+        // ✅ لا تؤكد تلقائياً - أرسل للمراجعة
         await markOrderAsSubmitted(order, 'telegram_stars', payment.telegram_payment_charge_id || '');
       }
     }
@@ -1048,7 +1052,7 @@ app.post('/api/payments/telegram-webhook/setup', async (req, res) => {
     const target = settings.telegramWebhookUrl;
     if (info?.url && info.url !== target) {
       return res.status(409).json({ ok: false, conflict: true, existingUrl: info.url, error: 'للبوت Webhook آخر. لم نغيّره حفاظًا على وظائف البوت الحالية.' });
-.    }
+    }
     const secret = await getStarsWebhookSecret();
     await telegramApi('setWebhook', { url: target, secret_token: secret, allowed_updates: ['message', 'pre_checkout_query'] });
     await db.collection('store').updateOne({ _id: 'main' }, { $set: { 'paymentSettings.starsWebhookConfigured': true, 'paymentSettings.starsWebhookUpdatedAt': new Date() } });
@@ -1087,10 +1091,21 @@ app.post('/api/orders/create', async (req, res) => {
       const product = await db.collection('products').findOne({ id: productId });
       if (!product) throw new Error('أحد المنتجات لم يعد متاحًا');
       if (!productAllowsCurrency(product, currency)) throw new Error(`طريقة الدفع المختارة غير مقبولة للمنتج: ${product.name}`);
+      
+      // ✅ NEW: التحقق من المخزون
+      if (product.stock !== null && product.stock < quantity) {
+        throw new Error(`الكمية المطلوبة غير متوفرة للمنتج: ${product.name}. المتبقي في المخزون: ${product.stock}`);
+      }
+
       const unitPrice = getDiscountedUnitPrice(product, currency);
       const lineTotal = orderRound(unitPrice * quantity, currency);
       total = orderRound(total + lineTotal, currency);
       lines.push({ productId: String(product.id), name: String(product.name || 'منتج').slice(0, 150), quantity, unitPrice, lineTotal });
+      
+      // ✅ NEW: خصم الكمية من المخزون فور إنشاء الطلب
+      if (product.stock !== null) {
+        await db.collection('products').updateOne({ id: productId }, { $inc: { stock: -quantity } });
+      }
     }
     
     if (currency === 'sar' && (!settings.manualEnabled || !settings.manualPaymentUsername)) throw new Error('الدفع اليدوي بالريال غير مهيأ حاليًا');
@@ -1121,6 +1136,13 @@ app.post('/api/orders/create', async (req, res) => {
         await db.collection('orders').updateOne({ id: order.id }, { $set: { providerPayUrl: checkoutUrl, providerCreatedAt: new Date() } });
       }
     } catch (providerError) {
+      // ✅ NEW: استرجاع المخزون في حال فشل إنشاء الفاتورة
+      for (const [productId, quantity] of merged.entries()) {
+        const product = await db.collection('products').findOne({ id: productId });
+        if (product && product.stock !== null) {
+          await db.collection('products').updateOne({ id: productId }, { $inc: { stock: quantity } });
+        }
+      }
       await db.collection('orders').deleteOne({ id: order.id });
       throw providerError;
     }
@@ -1191,7 +1213,7 @@ app.post('/api/ton/verify', async (req, res) => {
     const result = await verifyTonConnectOrder(order);
     if (!result.paid) return res.json({ ok: true, paid: false, message: 'لم يظهر التحويل المؤكد على الشبكة بعد. أعد المحاولة بعد قليل.' });
     
-    // ✅ NEW: لا تؤكد تلقائياً - أرسل للمراجعة
+    // ✅ لا تؤكد تلقائياً - أرسل للمراجعة
     await markOrderAsSubmitted(order, 'ton_connect', result.reference);
     return res.json({ ok: true, paid: true, reference: result.reference, status: 'submitted', message: 'تم استلام التحويل. الطلب بانتظار تأكيد الإدارة.' });
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
@@ -1254,7 +1276,7 @@ app.post('/api/orders/list', async (req, res) => {
   } catch (err) { res.status(403).json({ ok: false, error: err.message }); }
 });
 
-// ✅ NEW: تأكيد يدوي للدفع من المشرف/المالك
+// ✅ تأكيد يدوي للدفع من المشرف/المالك
 app.post('/api/orders/confirm-payment', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -1271,7 +1293,7 @@ app.post('/api/orders/confirm-payment', async (req, res) => {
   } catch (err) { res.status(400).json({ ok: false, error: err.message }); }
 });
 
-// ✅ NEW: رفض/إلغاء طلب مدفوع بانتظار التأكيد
+// ✅ رفض/إلغاء طلب مدفوع بانتظار التأكيد
 app.post('/api/orders/reject-payment', async (req, res) => {
   try {
     const user = await getUserFromReq(req);
@@ -1287,6 +1309,15 @@ app.post('/api/orders/reject-payment', async (req, res) => {
       { id: orderId },
       { $set: { status: 'rejected', statusLabel: ORDER_STATUS_LABELS.rejected, paymentStatus: 'rejected', updatedAt: new Date(), rejectedBy: user.id, rejectionReason: reason } }
     );
+    
+    // ✅ NEW: استرجاع المخزون عند رفض الطلب
+    for (const line of order.items || []) {
+      const product = await db.collection('products').findOne({ id: line.productId });
+      if (product && product.stock !== null) {
+        await db.collection('products').updateOne({ id: line.productId }, { $inc: { stock: Number(line.quantity) || 1 } });
+      }
+    }
+
     await Promise.allSettled([
       addNotification(order.userId, 'تم رفض الدفع', `تم رفض دفعة طلبك ${order.orderCode}. ${reason ? 'السبب: ' + reason : 'تواصل مع الدعم.'}`, 'warning', 'orders', { orderId }),
       notifyAdmins('تم رفض دفع', `تم رفض الطلب ${order.orderCode}. ${reason}`, 'warning')
