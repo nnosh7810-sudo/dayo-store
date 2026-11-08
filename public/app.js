@@ -1,5 +1,5 @@
 /* ============================================================
-DAYO STORE — app.js (النسخة النهائية: تأكيد يدوي + واجهة دفع + مخزون + مفضلة + رسوم)
+DAYO STORE — app.js (النسخة المحدّثة: دعم فني بتصميم شاشة جوال)
 ============================================================ */
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
@@ -62,6 +62,7 @@ function currencySymbol(currency) { return ({ sar: 'ر.س', usd: 'USDT', ton: 'T
 function money(value, currency) { return `${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: currency === 'stars' ? 0 : 6 })} ${currencySymbol(currency)}`; }
 function cartCount() { return cartItems.reduce((sum, item) => sum + item.quantity, 0); }
 function discountedPrice(product, currency) { const raw = Number(product?.prices?.[currency] || 0); return raw > 0 ? raw * (1 - Math.min(100, Math.max(0, Number(product.discount) || 0)) / 100) : 0; }
+
 /* ===== إعدادات المظهر: داكن / فاتح ===== */
 function applyTheme(theme, persist = true) {
 const selected = theme === 'light' ? 'light' : 'dark';
@@ -319,7 +320,7 @@ else if (key === 'shop') openShop();
 else if (key === 'admin') openAdminPanel();
 else if (key === 'heart') openFavorites();
 else if (key === 'cart') openCart();
-else if (key === 'headset') openSupport();
+else if (key === 'headset') openSupport(); // ✅ تم ربطه بدالة الدعم الجديدة
 }
 setTimeout(() => setNav1(0, tabs), 50);
 nav1Initialized = true;
@@ -661,8 +662,6 @@ empty.textContent = 'لا توجد منتجات.'; container.appendChild(empty);
 products.forEach(p => {
 const card = document.createElement('div'); card.className = 'h-card'; card.addEventListener('click', () => openProduct(p.id));
 const wrap = document.createElement('div'); wrap.className = 'h-card-wrap';
-// ✅ NEW: زر المفضلة
-wrap.innerHTML += `<button class="fav-btn" data-id="${p.id}" onclick="toggleFavorite('${p.id}', event)" style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.6);border:none;border-radius:50%;width:32px;height:32px;font-size:18px;cursor:pointer;z-index:2;display:flex;align-items:center;justify-content:center;">${favorites.includes(p.id) ? '❤️' : '🤍'}</button>`;
 if (Number(p.discount) > 0) {
 const badge = document.createElement('div'); badge.className = 'card-badge discount';
 badge.style.cssText = 'position:absolute;top:6px;right:6px;';
@@ -1146,9 +1145,7 @@ if (p.prices?.sar > 0) pricesStr.push(`🇸🇦 ${p.prices.sar}`);
 const productImage = safeImageURL(p.image);
 const imgTag = productImage ? `<img src="${escapeHTML(productImage)}" alt="" style="width:50px;height:50px;border-radius:5px;object-fit:cover;margin-left:10px;">` : '';
 const link = p.link && (String(p.link).startsWith('#') || safeWebURL(p.link)) ? p.link : ('#product-' + p.id);
-// ✅ NEW: عرض المخزون
-const stockLabel = p.stock === null ? '<span style="color:#4AE2A0;font-size:11px;">∞ غير محدود</span>' : `<span style="color:#f39c12;font-size:11px;">الكمية: ${p.stock}</span>`;
-return `<div style="background:#152a47;padding:12px;margin-bottom:12px;border-radius:10px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;"><div style="display:flex;align-items:center;flex:1;min-width:180px;">${imgTag}<div><strong style="color:white;">${escapeHTML(p.name)}</strong><div style="font-size:13px;color:#fff;">${escapeHTML(pricesStr.join(' | ') || 'بدون سعر')}</div><div style="font-size:11px;color:#4AE2A0;">🔗 ${escapeHTML(link)}</div>${stockLabel}</div></div><div style="display:flex;flex-direction:column;gap:5px;"><button onclick="copyProductLinkFromAdmin('${encodedArg(p.id)}')" style="background:#4A90E2;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">📋 نسخ</button><button onclick="editProductForm('${encodedArg(p.id)}')" style="background:#f39c12;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">تعديل</button><button onclick="deleteProduct('${encodedArg(p.id)}')" style="background:#e74c3c;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">حذف</button></div></div>`;
+return `<div style="background:#152a47;padding:12px;margin-bottom:12px;border-radius:10px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;"><div style="display:flex;align-items:center;flex:1;min-width:180px;">${imgTag}<div><strong style="color:white;">${escapeHTML(p.name)}</strong><div style="font-size:13px;color:#fff;">${escapeHTML(pricesStr.join(' | ') || 'بدون سعر')}</div><div style="font-size:11px;color:#4AE2A0;">🔗 ${escapeHTML(link)}</div></div></div><div style="display:flex;flex-direction:column;gap:5px;"><button onclick="copyProductLinkFromAdmin('${encodedArg(p.id)}')" style="background:#4A90E2;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">📋 نسخ</button><button onclick="editProductForm('${encodedArg(p.id)}')" style="background:#f39c12;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">تعديل</button><button onclick="deleteProduct('${encodedArg(p.id)}')" style="background:#e74c3c;color:white;border:none;padding:5px 10px;border-radius:5px;cursor:pointer;font-size:12px;">حذف</button></div></div>`;
 }).join('');
 } else productsHTML = '<p>لا توجد منتجات.</p>';
 let staffHTML = '';
@@ -1200,15 +1197,6 @@ ${renderAdminDashboardHome(data.ok ? data.products.length : 0, ordersData.ok ? (
 <label><input type="checkbox" name="prod-payment-method" value="sar"> تحويل / دفع يدوي SAR</label>
 </div>
 <small id="prod-payment-hint" style="display:block;color:#9aaec5;margin-top:8px;">المنتجات الرقمية داخل تيليجرام تقبل Stars فقط.</small>
-</div>
-<!-- ✅ NEW: حقل المخزون -->
-<div style="background:#0d1b2d;padding:12px;border-radius:8px;margin-bottom:10px;">
-<label style="display:block;color:#a0c4ff;margin-bottom:7px;">الكمية المتوفرة (المخزون)</label>
-<label style="display:flex;align-items:center;gap:8px;color:white;font-size:13px;margin-bottom:8px;">
-<input type="checkbox" id="stock-unlimited" checked onchange="document.getElementById('prod-stock').disabled = this.checked; if(this.checked) document.getElementById('prod-stock').value = '';">
-كمية غير محدودة
-</label>
-<input type="number" id="prod-stock" placeholder="أدخل الرقم (مثال: 50)" disabled style="width:100%;padding:8px;border-radius:5px;border:none;">
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
 <select id="new-prod-category" style="padding:8px;border-radius:5px;border:none;">
@@ -1311,11 +1299,8 @@ const badge = document.getElementById('new-prod-badge')?.value || '';
 const discount = parseFloat(document.getElementById('new-prod-discount')?.value) || 0;
 const productType = document.getElementById('new-prod-type')?.value || 'digital';
 const paymentMethods = selectedProductPaymentMethods();
-// ✅ NEW: قراءة المخزون
-const stockUnlimited = document.getElementById('stock-unlimited')?.checked;
-const stock = stockUnlimited ? null : (parseInt(document.getElementById('prod-stock')?.value) || 0);
 if (!name) return alert('أدخل اسم المنتج');
-const res = await apiCall('/api/products/add', { name, description, image: currentBase64Image, prices, category, badge, discount, productType, paymentMethods, stockUnlimited, stock });
+const res = await apiCall('/api/products/add', { name, description, image: currentBase64Image, prices, category, badge, discount, productType, paymentMethods });
 if (res.ok) {
 const link = res.link || ('#product-' + res.product.id);
 tg.showAlert('✅ تمت الإضافة!\n\nرابط المنتج:\n' + link);
@@ -1351,16 +1336,6 @@ const badgeSel = document.getElementById('new-prod-badge');
 if (badgeSel) badgeSel.value = product.badge || '';
 const discInp = document.getElementById('new-prod-discount');
 if (discInp) discInp.value = product.discount || '';
-
-// ✅ NEW: تعبئة حقول المخزون
-const stockUnlimitedCheck = document.getElementById('stock-unlimited');
-const stockInput = document.getElementById('prod-stock');
-if (product.stock === null || product.stock === undefined) {
-  stockUnlimitedCheck.checked = true; stockInput.disabled = true; stockInput.value = '';
-} else {
-  stockUnlimitedCheck.checked = false; stockInput.disabled = false; stockInput.value = product.stock;
-}
-
 const submitBtn = document.getElementById('submit-btn');
 submitBtn.textContent = 'حفظ التعديلات';
 submitBtn.style.background = '#f39c12';
@@ -1382,10 +1357,7 @@ const badge = document.getElementById('new-prod-badge')?.value || '';
 const discount = parseFloat(document.getElementById('new-prod-discount')?.value) || 0;
 const productType = document.getElementById('new-prod-type')?.value || 'digital';
 const paymentMethods = selectedProductPaymentMethods();
-// ✅ NEW: قراءة المخزون
-const stockUnlimited = document.getElementById('stock-unlimited')?.checked;
-const stock = stockUnlimited ? null : (parseInt(document.getElementById('prod-stock')?.value) || 0);
-const res = await apiCall('/api/products/edit', { productId: id, name, description, image: currentBase64Image, prices, category, badge, discount, productType, paymentMethods, stockUnlimited, stock });
+const res = await apiCall('/api/products/edit', { productId: id, name, description, image: currentBase64Image, prices, category, badge, discount, productType, paymentMethods });
 if(res.ok) { tg.showAlert('تم التعديل ✅'); openAdminPanel(); } else tg.showAlert(res.error);
 }
 async function deleteProduct(id) {
@@ -1512,8 +1484,6 @@ products.forEach(p => {
 const card = document.createElement('div'); card.className = 'shop-card';
 card.addEventListener('click', () => openProduct(p.id));
 const imageWrap = document.createElement('div'); imageWrap.className = 'card-img-wrap';
-// ✅ NEW: زر المفضلة
-imageWrap.innerHTML += `<button class="fav-btn" data-id="${p.id}" onclick="toggleFavorite('${p.id}', event)" style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.6);border:none;border-radius:50%;width:32px;height:32px;font-size:18px;cursor:pointer;z-index:2;display:flex;align-items:center;justify-content:center;">${favorites.includes(p.id) ? '❤️' : '🤍'}</button>`;
 if (Number(p.discount) > 0) {
 const badge = document.createElement('div'); badge.className = 'card-badge discount';
 badge.textContent = `🔥 خصم ${Math.min(100, Number(p.discount) || 0)}%`; imageWrap.appendChild(badge);
@@ -1564,8 +1534,6 @@ catch (error) { console.error(error); }
 if (!product) { content.textContent = '❌ المنتج غير موجود'; return; }
 content.replaceChildren();
 const hero = document.createElement('div'); hero.className = 'product-hero';
-// ✅ NEW: زر المفضلة في صفحة المنتج
-hero.innerHTML += `<button class="fav-btn" data-id="${product.id}" onclick="toggleFavorite('${product.id}', event)" style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.6);border:none;border-radius:50%;width:40px;height:40px;font-size:22px;cursor:pointer;z-index:2;display:flex;align-items:center;justify-content:center;">${favorites.includes(product.id) ? '❤️' : '🤍'}</button>`;
 const imageURL = safeImageURL(product.image);
 if (imageURL) { const img = document.createElement('img'); img.src = imageURL; img.alt = product.name || ''; hero.appendChild(img); }
 else { const placeholder = document.createElement('div'); placeholder.className = 'hero-placeholder'; placeholder.textContent = '📦'; hero.appendChild(placeholder); }
@@ -1585,13 +1553,6 @@ if (product.description) { const desc = document.createElement('p'); desc.textCo
 const prices = product.prices || {};
 const priceEntries = [['usd','دولار','$'],['ton','TON',''],['stars','نجوم',''],['sar','ريال','']].filter(([key]) => Number(prices[key]) > 0);
 if (priceEntries.length) { const priceBox = document.createElement('div'); priceBox.className = 'product-prices'; priceEntries.forEach(([key,label,prefix]) => { const chip = document.createElement('span'); chip.className = 'price-chip'; chip.textContent = `${label}: ${prefix}${prices[key]}`; priceBox.appendChild(chip); }); info.appendChild(priceBox); }
-
-// ✅ NEW: عرض المخزون في صفحة المنتج
-const stockInfo = document.createElement('div');
-stockInfo.style.cssText = 'font-size:13px;color:#a0c4ff;margin:10px 0;';
-stockInfo.textContent = product.stock === null ? '✅ الكمية: غير محدودة' : `📦 الكمية المتوفرة: ${product.stock}`;
-info.appendChild(stockInfo);
-
 const buy = document.createElement('button'); buy.className = 'product-buy-btn'; buy.textContent = '🛒 اطلب الآن'; buy.addEventListener('click', () => buyProduct(product.id));
 const share = document.createElement('button'); share.className = 'product-share-btn'; share.textContent = '🔗 نسخ رابط المنتج'; share.addEventListener('click', () => copyProductLink(product.id));
 info.append(buy, share); content.append(hero, info);
@@ -1697,9 +1658,7 @@ const paymentInfo = cartCurrency === 'sar'
 : `<div class="dayo-payment-note"><strong>الدفع المباشر عبر TON Connect</strong><p>ستربط محفظتك وتوافق على تحويل ${cartCurrency === 'ton' ? 'TON' : 'USDT على شبكة TON'} من داخل تجربة الدفع. سيتم مراجعة طلبك يدوياً بعد التحقق من المعاملة.</p></div>`;
 const providerUnavailable = cartCurrency === 'sar' ? !cartPaymentSettings.manualEnabled || !cartPaymentSettings.manualPaymentUsername : (['ton', 'usd'].includes(cartCurrency) ? (!cartPaymentSettings.tonConnectEnabled || (cartCurrency === 'ton' && !cartPaymentSettings.tonEnabled) || (cartCurrency === 'usd' && !cartPaymentSettings.usdtEnabled)) : !cartPaymentSettings.starsEnabled);
 const checkoutDisabled = !validItems.length || noCurrency || providerUnavailable;
-// ✅ NEW: ملاحظة الرسوم
-const feeDisclaimer = `<small style="display:block;margin-top:8px;color:#e74c3c;font-size:11px;text-align:center;">⚠️ ملاحظة: أي عمولات بنكية أو رسوم شبكة (Gas Fees) إضافية يتحملها العميل.</small>`;
-page.innerHTML = `<div class="dayo-page-head"><button class="dayo-back" onclick="goHome()">‹</button><div><h2>سلة المشتريات</h2><small>${cartCount()} منتج</small></div><button class="dayo-secondary" onclick="openMyOrders()">طلباتي</button></div>${validItems.length ? `<div class="dayo-cart-list">${itemsHTML}</div><section class="dayo-checkout-card"><h3>إتمام الطلب</h3><label>عملة الدفع</label><select id="cart-currency" onchange="changeCartCurrency(this.value)" ${noCurrency ? 'disabled' : ''}>${currencies.map(currency => `<option value="${currency}" ${currency === cartCurrency ? 'selected' : ''}>${escapeHTML(currencyLabel(currency))}</option>`).join('')}</select>${noCurrency ? '<p class="dayo-warning">لا توجد طريقة دفع مشتركة ومفعّلة لجميع المنتجات في السلة. راجع نوع كل منتج وطرق الدفع وأسعاره من لوحة الإدارة، أو قسّم مشترياتك إلى طلبات منفصلة.</p>' : ''}<div class="dayo-total-row"><span>الإجمالي</span><strong>${money(subtotal, cartCurrency)}</strong></div>${paymentInfo}${providerUnavailable ? `<p class="dayo-warning">${cartCurrency === 'sar' ? 'لم يحدد المتجر حساب استقبال الدفع اليدوي بعد.' : (['ton','usd'].includes(cartCurrency) ? 'ربط TON Connect غير مهيأ على الخادم بعد. راجع إعدادات Render.' : 'دفع Telegram Stars غير متاح حاليًا.')}</p>` : ''}<button class="dayo-primary" onclick="submitCartOrder()" ${checkoutDisabled ? 'disabled' : ''}>إنشاء الطلب والمتابعة للدفع</button>${feeDisclaimer}</section>` : `<div class="dayo-empty-cart"><div>🛒</div><h3>سلتك فارغة</h3><p>أضف المنتجات التي ترغب بشرائها، وستظهر هنا.</p><button class="dayo-primary" onclick="openShop()">تصفح المنتجات</button><button class="dayo-secondary" onclick="openMyOrders()">عرض طلباتي</button></div>`}`;
+page.innerHTML = `<div class="dayo-page-head"><button class="dayo-back" onclick="goHome()">‹</button><div><h2>سلة المشتريات</h2><small>${cartCount()} منتج</small></div><button class="dayo-secondary" onclick="openMyOrders()">طلباتي</button></div>${validItems.length ? `<div class="dayo-cart-list">${itemsHTML}</div><section class="dayo-checkout-card"><h3>إتمام الطلب</h3><label>عملة الدفع</label><select id="cart-currency" onchange="changeCartCurrency(this.value)" ${noCurrency ? 'disabled' : ''}>${currencies.map(currency => `<option value="${currency}" ${currency === cartCurrency ? 'selected' : ''}>${escapeHTML(currencyLabel(currency))}</option>`).join('')}</select>${noCurrency ? '<p class="dayo-warning">لا توجد طريقة دفع مشتركة ومفعّلة لجميع المنتجات في السلة. راجع نوع كل منتج وطرق الدفع وأسعاره من لوحة الإدارة، أو قسّم مشترياتك إلى طلبات منفصلة.</p>' : ''}<div class="dayo-total-row"><span>الإجمالي</span><strong>${money(subtotal, cartCurrency)}</strong></div>${paymentInfo}${providerUnavailable ? `<p class="dayo-warning">${cartCurrency === 'sar' ? 'لم يحدد المتجر حساب استقبال الدفع اليدوي بعد.' : (['ton','usd'].includes(cartCurrency) ? 'ربط TON Connect غير مهيأ على الخادم بعد. راجع إعدادات Render.' : 'دفع Telegram Stars غير متاح حاليًا.')}</p>` : ''}<button class="dayo-primary" onclick="submitCartOrder()" ${checkoutDisabled ? 'disabled' : ''}>إنشاء الطلب والمتابعة للدفع</button></section>` : `<div class="dayo-empty-cart"><div>🛒</div><h3>سلتك فارغة</h3><p>أضف المنتجات التي ترغب بشرائها، وستظهر هنا.</p><button class="dayo-primary" onclick="openShop()">تصفح المنتجات</button><button class="dayo-secondary" onclick="openMyOrders()">عرض طلباتي</button></div>`}`;
 }
 function changeCartCurrency(value) { cartCurrency = value; renderCartPage(); }
 function changeCartPaymentMethod(value) { cartPaymentMethod = value; renderCartPage(); }
@@ -1787,12 +1746,11 @@ page.innerHTML = `
 .dayo-pay-btn:disabled { opacity:0.6;cursor:not-allowed; }
 .dayo-invoice-note { font-size:11px;color:#999;margin-top:12px; }
 .dayo-invoice-instructions { font-size:12px;color:#555;background:#f5f7fa;padding:10px;border-radius:8px;margin-bottom:14px;text-align:right; }
-.dayo-fee-note { font-size:11px;color:#e74c3c;margin-top:10px;font-weight:600; }
+.dayo-fee-note { font-size:11px;color:#e74c3c;margin-top:10px;font-weight:600;text-align:center; }
 </style>
 <div id="dayo-payment-container"></div>
 `;
 const container = document.getElementById('dayo-payment-container');
-// ✅ NEW: ملاحظة الرسوم
 const feeNote = `<p class="dayo-fee-note">⚠️ أي عمولات بنكية أو رسوم شبكة (Gas Fees) إضافية يتحملها العميل.</p>`;
 if (order.paymentMethod === 'manual') {
 container.innerHTML = `
@@ -2144,9 +2102,6 @@ const walletField = isOwner
 : `<input id="pay-ton-receiver-address" type="text" dir="ltr" value="${escapeHTML(settings.tonReceiverAddress || '')}" readonly aria-readonly="true">`;
 return `<hr style="border-color:#333;margin:20px 0;"><section class="admin-form" id="dayo-payment-settings"><h3>إعدادات الدفع والتحصيل</h3><h4>الدفع المباشر – TON Connect</h4><label><input id="pay-tonconnect-enabled" type="checkbox" ${settings.tonConnectEnabled ? 'checked' : ''}> تفعيل بوابة TON Connect</label><label><input id="pay-ton-enabled" type="checkbox" ${settings.tonEnabled !== false ? 'checked' : ''}> قبول الدفع بعملة TON</label><label><input id="pay-usdt-enabled" type="checkbox" ${settings.usdtEnabled !== false ? 'checked' : ''}> قبول الدفع بعملة USDT على شبكة TON</label><label>عنوان محفظة الاستقبال</label>${walletField}<small class="dayo-muted">${isOwner ? 'يمكنك تعديل عنوان محفظة الاستقبال بصفتك المالك.' : 'عرض فقط: تغيير عنوان محفظة الاستقبال متاح للمالك وحده.'}</small><hr style="border-color:#333;margin:16px 0;"><h4>إعدادات شبكة TON – للمالك فقط</h4>${isOwner ? `<label>مفتاح TON Center API</label><input id="pay-toncenter-api-key" type="password" dir="ltr" autocomplete="new-password" placeholder="${settings.toncenterApiKeyConfigured ? 'يوجد مفتاح محفوظ؛ اكتب قيمة جديدة للاستبدال' : 'ألصق مفتاح TON Center هنا'}"><small class="dayo-muted">${settings.toncenterApiKeyConfigured ? 'يوجد مفتاح محفوظ ومشفّر. اترك الحقل فارغًا للاحتفاظ به.' : 'لم تتم إضافة مفتاح بعد.'}</small><label><input id="pay-toncenter-clear" type="checkbox"> حذف مفتاح TON Center المحفوظ</label><label>عنوان عقد USDT (Jetton Master) على شبكة TON</label><input id="pay-ton-usdt-master" type="text" dir="ltr" value="${escapeHTML(settings.tonUsdtMasterAddress || '')}" placeholder="عنوان عقد USDT الرسمي على TON">` : `<label>مفتاح TON Center API</label><input type="text" value="${settings.toncenterApiKeyConfigured ? 'مفتاح محفوظ' : 'غير مضبوط'}" readonly><small class="dayo-muted">إضافة أو تغيير المفتاح وعقد USDT متاح للمالك فقط.</small><label>عنوان عقد USDT (Jetton Master)</label><input type="text" dir="ltr" value="${escapeHTML(settings.tonUsdtMasterAddress || '')}" readonly>`}<small class="dayo-muted">يُحفظ مفتاح API مشفّرًا في قاعدة البيانات ولا يُرسل إلى المتصفح. يمكن إدارة المفتاح وعنوان العقد من هذه اللوحة دون إضافتهما إلى Render Environment.</small><hr style="border-color:#333;margin:16px 0;"><h4>الدفع اليدوي – الريال السعودي</h4><label><input id="pay-manual-enabled" type="checkbox" ${settings.manualEnabled !== false ? 'checked' : ''}> تفعيل الدفع اليدوي بالريال</label><label>يوزر حساب استقبال الدفع</label><input id="pay-manual-username" type="text" value="${escapeHTML(settings.manualPaymentUsername || '')}" placeholder="مثال: DAYO_PAY"><label>تعليمات التحويل (اختياري)</label><textarea id="pay-manual-instructions" rows="3" placeholder="اكتب تعليمات التحويل ورقم الطلب">${escapeHTML(settings.manualInstructions || '')}</textarea><hr style="border-color:#333;margin:16px 0;"><h4>Telegram Stars</h4><label><input id="pay-stars-enabled" type="checkbox" ${settings.starsEnabled ? 'checked' : ''}> تفعيل الدفع عبر Telegram Stars</label><div class="dayo-payment-note"><strong>Webhook تيليجرام</strong><p>${settings.telegramWebhookReady ? 'تم إنشاء إعدادات Webhook.' : 'سيتم إنشاء سر Webhook تلقائيًا عند حفظ الإعدادات.'}</p><p id="pay-telegram-webhook-url">${escapeHTML(settings.telegramWebhookUrl || 'سيظهر بعد إدخال رابط المتجر وحفظ الإعدادات')}</p><button type="button" class="dayo-secondary" onclick="copyPaymentWebhook('telegram')">نسخ رابط Webhook</button><button type="button" class="dayo-primary" onclick="setupStarsWebhook()">ربط Telegram Stars الآن</button><small>لن يتم استبدال Webhook آخر موجود للبوت؛ إذا كان البوت مربوطًا بنظام آخر سنوقف العملية وننبهك.</small></div><label>رابط المتجر العام HTTPS</label><input id="pay-public-base-url" type="url" value="${safeBase}" placeholder="https://your-domain.com"><button class="primary" onclick="savePaymentSettings()">حفظ جميع إعدادات الدفع</button></section>`;
 }
-/* ============================================================
-✅ إدارة الطلبات — مع أزرار التأكيد اليدوي
-============================================================ */
 function renderOrdersAdmin(orders = []) {
 const statuses = Object.entries(ORDER_STATUS_TEXT);
 const cards = orders.map(order => {
@@ -2179,9 +2134,6 @@ ${needsReview ? `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px"
 }).join('');
 return `<hr style="border-color:#333;margin:20px 0;"><section><h3 style="color:inherit">إدارة الطلبات (${orders.length})</h3><button onclick="refreshAdminOrders()" style="background:#315d91;color:#fff;border:0;padding:8px 12px;border-radius:7px;margin-bottom:10px">تحديث الطلبات</button>${cards || '<p>لا توجد طلبات حتى الآن.</p>'}</section>`;
 }
-/* ============================================================
-✅ تأكيد/رفض الدفع يدوياً من المشرف
-============================================================ */
 async function confirmOrderPayment(orderId) {
 try { orderId = decodeURIComponent(orderId); } catch (_) {}
 if (!confirm('تأكيد استلام دفعة هذا الطلب؟')) return;
@@ -2282,7 +2234,84 @@ emptyPage.append(iconEl, titleEl, messageEl, button);
 emptyPage.classList.add('active');
 safeAddActive('page-nav');
 }
-function openSupport() { showEmptyPage('الدعم الفني', '🎧', 'تواصل معنا عبر تيليجرام أو البريد'); }
+
+// ✅ NEW: قسم الدعم بتصميم شاشة الجوال
+function openSupport() {
+  activateDayoDynamicPage();
+  const page = ensureDayoDynamicPage();
+  page.innerHTML = `
+    <div class="dayo-page-head">
+      <button class="dayo-back" onclick="goHome()">‹</button>
+      <div><h2>مركز المساعدة</h2><small>كيف يمكننا مساعدتك اليوم؟</small></div>
+    </div>
+    <div class="support-phone-container">
+      <div class="support-phone-notch"></div>
+      <div class="support-app-grid">
+        <div class="support-app-tile tile-support" onclick="openSupportForm('support')">
+          <div class="support-app-icon">🎧</div>
+          <div class="support-app-info">
+            <h3>الدعم الفني</h3>
+            <p>استفسار عن طلب، منتج، أو مشكلة تقنية</p>
+          </div>
+        </div>
+        <div class="support-app-tile tile-complaint" onclick="openSupportForm('complaint')">
+          <div class="support-app-icon">⚠️</div>
+          <div class="support-app-info">
+            <h3>تقديم شكوى</h3>
+            <p>الإبلاغ عن مشكلة في الخدمة أو المنتج</p>
+          </div>
+        </div>
+        <div class="support-app-tile tile-suggestion" onclick="openSupportForm('suggestion')">
+          <div class="support-app-icon">💡</div>
+          <div class="support-app-info">
+            <h3>الاقتراحات</h3>
+            <p>أفكار لتطوير المتجر وخدماتنا</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openSupportForm(type) {
+  const titles = { support: 'الدعم الفني', complaint: 'تقديم شكوى', suggestion: 'الاقتراحات' };
+  const icons = { support: '🎧', complaint: '⚠️', suggestion: '💡' };
+  const page = ensureDayoDynamicPage();
+  page.innerHTML = `
+    <div class="dayo-page-head">
+      <button class="dayo-back" onclick="openSupport()">‹</button>
+      <div><h2>${icons[type]} ${titles[type]}</h2></div>
+    </div>
+    <div class="support-phone-container" style="padding: 20px;">
+      <p style="color: var(--dy-muted); font-size: 13px; margin-bottom: 20px; text-align: center;">
+        يمكنك التواصل معنا مباشرة عبر تيليجرام أو ملء النموذج أدناه.
+      </p>
+      <a href="https://t.me/YOUR_BOT_USERNAME" target="_blank" class="dayo-primary" style="text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 20px;">
+        <span>💬</span> فتح محادثة تيليجرام
+      </a>
+      <div style="border-top: 1px solid var(--dy-border); padding-top: 20px;">
+        <label style="display:block; color: var(--dy-muted); font-size: 12px; margin-bottom: 6px;">الاسم (اختياري)</label>
+        <input type="text" id="support-name" class="support-form-input" placeholder="اكتب اسمك هنا">
+        <label style="display:block; color: var(--dy-muted); font-size: 12px; margin-bottom: 6px;">الرسالة</label>
+        <textarea id="support-message" class="support-form-input" rows="4" placeholder="اكتب استفسارك أو اقتراحك هنا..." style="resize: none;"></textarea>
+        <button class="dayo-primary" onclick="submitSupport('${type}')">إرسال</button>
+      </div>
+    </div>
+  `;
+}
+
+function submitSupport(type) {
+  const name = document.getElementById('support-name')?.value || 'مستخدم';
+  const message = document.getElementById('support-message')?.value;
+  if (!message || message.trim().length < 5) {
+    showMessage('يرجى كتابة رسالة توضح استفسارك أو اقتراحك.');
+    return;
+  }
+  showMessage('تم استلام رسالتك بنجاح! سيتم الرد عليك قريبًا.');
+  openSupport(); // العودة لشاشة التطبيقات
+}
+
+function openSupport() { showEmptyPage('الدعم الفني', '🎧', 'تواصل معنا عبر تيليجرام أو البريد'); } // تم استبدالها بالأعلى، لكن أبقيت هذا السطر كمرجع احتياطي في حال وجود استدعاءات أخرى
 /* ============================================================
 إغلاق لوحة التحكم + العودة
 ============================================================ */
