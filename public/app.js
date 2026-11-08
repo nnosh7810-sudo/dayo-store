@@ -2286,7 +2286,7 @@ function openSupportForm(type) {
       <p style="color: var(--dy-muted); font-size: 13px; margin-bottom: 20px; text-align: center;">
         يمكنك التواصل معنا مباشرة عبر تيليجرام أو ملء النموذج أدناه.
       </p>
-      <a href="https://t.me/YOUR_BOT_USERNAME" target="_blank" class="dayo-primary" style="text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 20px;">
+      <a href="https://t.me/c_h_8" target="_blank" class="dayo-primary" style="text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 20px;">
         <span>💬</span> فتح محادثة تيليجرام
       </a>
       <div style="border-top: 1px solid var(--dy-border); padding-top: 20px;">
