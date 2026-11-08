@@ -736,6 +736,67 @@
     body[data-theme="light"] .dayo-fee-note { color: #c0392b; }
 
     @media(max-width:380px) { .dayo-menu-toggle { left:53px;width:38px;height:38px; } }
+
+        /* ===== تصميم شاشة الدعم (شبه الجوال) ===== */
+    .support-phone-container {
+        max-width: 420px;
+        margin: 20px auto;
+        background: linear-gradient(180deg, #111a2e 0%, #0a101f 100%);
+        border: 1px solid rgba(112, 151, 208, 0.2);
+        border-radius: 36px;
+        padding: 32px 20px 24px;
+        box-shadow: 0 24px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+        position: relative;
+        overflow: hidden;
+    }
+    body[data-theme="light"] .support-phone-container {
+        background: linear-gradient(180deg, #ffffff 0%, #f3f6fc 100%);
+        border-color: #dce4f0;
+        box-shadow: 0 24px 60px rgba(37,61,99,0.12), inset 0 1px 0 rgba(255,255,255,0.8);
+    }
+    .support-phone-notch {
+        width: 120px; height: 26px; background: #050914;
+        border-radius: 0 0 18px 18px; margin: -32px auto 24px;
+        position: relative; z-index: 2;
+    }
+    body[data-theme="light"] .support-phone-notch { background: #17243a; }
+    
+    .support-app-grid {
+        display: grid; grid-template-columns: 1fr; gap: 16px;
+    }
+    .support-app-tile {
+        display: flex; align-items: center; gap: 16px;
+        background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 22px; padding: 18px; cursor: pointer;
+        transition: transform 0.2s, background 0.2s, border-color 0.2s;
+    }
+    .support-app-tile:active { transform: scale(0.97); }
+    body[data-theme="light"] .support-app-tile {
+        background: #ffffff; border-color: #e0e7f1; 
+        box-shadow: 0 4px 12px rgba(37,61,99,0.05);
+    }
+    .support-app-tile:hover { border-color: rgba(74,144,226,0.4); }
+    
+    .support-app-icon {
+        width: 56px; height: 56px; border-radius: 18px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 28px; flex-shrink: 0; color: white;
+    }
+    .support-app-info h3 { margin: 0 0 4px; font-size: 16px; font-weight: 700; color: var(--dy-text); }
+    .support-app-info p { margin: 0; font-size: 12px; color: var(--dy-muted); line-height: 1.5; }
+
+    /* ألوان التطبيقات */
+    .tile-support .support-app-icon { background: linear-gradient(135deg, #4A90E2, #357ABD); }
+    .tile-complaint .support-app-icon { background: linear-gradient(135deg, #e74c3c, #c0392b); }
+    .tile-suggestion .support-app-icon { background: linear-gradient(135deg, #f39c12, #d35400); }
+
+    .support-form-input {
+        width: 100%; padding: 12px; border-radius: 12px; 
+        border: 1px solid var(--dy-border); background: var(--dy-surface); 
+        color: var(--dy-text); margin-bottom: 12px; font-family: inherit; font-size: 14px;
+        box-sizing: border-box;
+    }
+    .support-form-input:focus { outline: 2px solid #4A90E2; border-color: transparent; }
   </style>
 </head>
 <body>
